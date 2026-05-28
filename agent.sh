@@ -44,6 +44,24 @@ get_online_cpu_count() {
     getconf _NPROCESSORS_ONLN
 }
 
+read_lscpu_value() {
+    local label="$1"
+
+    command -v lscpu >/dev/null 2>&1 || return 1
+
+    lscpu 2>/dev/null | awk -v label="$label" -F: '
+        function trimmed(value) {
+            sub(/^[ \t]+/, "", value)
+            sub(/[ \t]+$/, "", value)
+            return value
+        }
+        trimmed($1) == label {
+            print trimmed($2)
+            exit
+        }
+    '
+}
+
 get_core_count() {
     if is_container; then
         local cores
@@ -56,14 +74,12 @@ get_core_count() {
         return
     fi
 
-    if command -v lscpu >/dev/null 2>&1; then
-        local cores_per_socket sockets
-        cores_per_socket=$(lscpu 2>/dev/null | awk '/^Core\(s\) per socket:/ {print $4; exit}')
-        sockets=$(lscpu 2>/dev/null | awk '/^Socket\(s\):/ {print $2; exit}')
-        if [[ -n "$cores_per_socket" && -n "$sockets" ]]; then
-            echo $((cores_per_socket * sockets))
-            return
-        fi
+    local cores_per_socket sockets
+    cores_per_socket=$(read_lscpu_value "Core(s) per socket")
+    sockets=$(read_lscpu_value "Socket(s)")
+    if [[ "$cores_per_socket" =~ ^[0-9]+$ && "$sockets" =~ ^[0-9]+$ ]]; then
+        echo $((cores_per_socket * sockets))
+        return
     fi
 
     get_online_cpu_count
@@ -76,12 +92,10 @@ get_thread_count() {
 get_cpu_model() {
     local model
 
-    if command -v lscpu >/dev/null 2>&1; then
-        model=$(lscpu 2>/dev/null | awk -F: '/Model name:/ { sub(/^[ \t]+/, "", $2); print $2; exit }')
-        if [[ -n "$model" ]]; then
-            echo "$model"
-            return
-        fi
+    model=$(read_lscpu_value "Model name")
+    if [[ -n "$model" ]]; then
+        echo "$model"
+        return
     fi
 
     model=$(awk -F: '/model name/ { sub(/^ /, "", $2); print $2; exit }' /proc/cpuinfo)
@@ -102,12 +116,10 @@ get_cpu_model() {
 get_socket_count() {
     local sockets
 
-    if command -v lscpu >/dev/null 2>&1; then
-        sockets=$(lscpu 2>/dev/null | awk '/^Socket\(s\):/ { print $2; exit }')
-        if [[ "$sockets" =~ ^[0-9]+$ ]]; then
-            echo "$sockets"
-            return
-        fi
+    sockets=$(read_lscpu_value "Socket(s)")
+    if [[ "$sockets" =~ ^[0-9]+$ ]]; then
+        echo "$sockets"
+        return
     fi
 
     sockets=$(awk '/^physical id/ { ids[$4] = 1 } END { print length(ids) }' /proc/cpuinfo)
@@ -120,26 +132,32 @@ get_socket_count() {
 }
 
 get_cpu_clock_mhz() {
-    local mhz
+    local mhz="" freq_glob="/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq"
 
-    if command -v lscpu >/dev/null 2>&1; then
-        mhz=$(lscpu 2>/dev/null | awk '/^CPU max MHz:/ { print $4; exit }')
-        if [[ -z "$mhz" || "$mhz" == "0.0000" ]]; then
-            mhz=$(lscpu 2>/dev/null | awk '/^CPU MHz:/ { print $3; exit }')
-        fi
-        if [[ "$mhz" =~ ^[0-9.]+$ && "$mhz" != "0" && "$mhz" != "0.0" ]]; then
-            printf "%.2f" "$mhz"
-            return
-        fi
+    if compgen -G "$freq_glob" >/dev/null 2>&1; then
+        mhz=$(awk '{ sum += $1; count++ } END { if (count > 0) printf "%.2f", sum / count / 1000; else print "0" }' $freq_glob 2>/dev/null)
     fi
 
-    awk '/^cpu MHz/ {
-        if ($4 + 0 > max) max = $4 + 0
-    }
-    END {
-        if (max > 0) printf "%.2f", max
-        else print "0"
-    }' /proc/cpuinfo
+    if [[ ! "$mhz" =~ ^[0-9.]+$ || "$mhz" == "0" || "$mhz" == "0.0" ]]; then
+        mhz=$(awk '/^cpu MHz/ {
+            sum += $4
+            count++
+        }
+        END {
+            if (count > 0) printf "%.2f", sum / count
+            else print "0"
+        }' /proc/cpuinfo 2>/dev/null)
+    fi
+
+    if [[ ! "$mhz" =~ ^[0-9.]+$ || "$mhz" == "0" || "$mhz" == "0.0" ]]; then
+        mhz=$(read_lscpu_value "CPU MHz")
+    fi
+
+    if [[ "$mhz" =~ ^[0-9.]+$ ]]; then
+        printf "%.2f\n" "$mhz"
+    else
+        echo "0"
+    fi
 }
 
 get_os_name() {
@@ -204,7 +222,7 @@ compute_cpu_metrics_from_proc_stat_samples() {
             du_steal = delta(a[8], b[8])
             total = du_user + du_nice + du_sys + du_idle + du_iow + du_irq + du_soft + du_steal
             if (total <= 0) {
-                printf "0 0 0 0 0 0"
+                printf "0 0 0 0 0\n"
                 exit
             }
             usage = (total - du_idle) / total * 100
@@ -212,7 +230,7 @@ compute_cpu_metrics_from_proc_stat_samples() {
             sys_pct = (du_sys + du_irq + du_soft) / total * 100
             iow_pct = du_iow / total * 100
             steal_pct = du_steal / total * 100
-            printf "%.2f %.2f %.2f %.2f %.2f %.2f", usage, user_pct, sys_pct, iow_pct, steal_pct
+            printf "%.2f %.2f %.2f %.2f %.2f\n", usage, user_pct, sys_pct, iow_pct, steal_pct
         }
     '
 }
@@ -931,7 +949,7 @@ build_payload() {
         --argjson uptimeSeconds "$(get_uptime_seconds)" \
         --arg cpuModel "$(get_cpu_model)" \
         --argjson socketCount "$(get_socket_count)" \
-        --argjson cpuClockMhz "$(get_cpu_clock_mhz)" \
+        --argjson cpuClockMhz "$(get_cpu_clock_mhz 2>/dev/null || echo 0)" \
         --argjson cpuUsage "${RATE_CPU_USAGE:-0}" \
         --argjson memoryUsage "$(get_memory_usage)" \
         --argjson memoryTotal "$(get_memory_total)" \
