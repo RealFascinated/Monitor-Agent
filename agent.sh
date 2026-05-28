@@ -165,13 +165,26 @@ get_cpu_usage() {
 }
 
 read_network_stats() {
-    awk 'NR > 2 {
-        iface = $1
-        sub(/:$/, "", iface)
-        if (iface == "" || iface == "lo") next
-        if (iface !~ /^(eth|ens|enp|eno|enx|em|wlan|wlp|bond)[0-9]+$/) next
-        print iface, $2, $3, $4, $10, $11, $12
-    }' /proc/net/dev
+    awk '
+        function normalize_iface(name) {
+            sub(/@.*$/, "", name)
+            return name
+        }
+        function is_common_interface(name) {
+            name = normalize_iface(name)
+            if (name == "" || name == "lo") return 0
+            if (name ~ /^veth/ || name ~ /^fwbr/ || name ~ /^docker/ || name ~ /^br-/ || name ~ /^virbr/) return 0
+            if (name ~ /^(tap|tun|wg|dummy|nlmon|ifb|vnet|lxc)/) return 0
+            return name ~ /^(eth|ens|enp|eno|enx|em|wlan|wlp|bond)[0-9]+$/
+        }
+        NR > 2 {
+            iface = $1
+            sub(/:$/, "", iface)
+            if (!is_common_interface(iface)) next
+            iface = normalize_iface(iface)
+            print iface, $2, $3, $4, $10, $11, $12
+        }
+    ' /proc/net/dev
 }
 
 compute_cpu_usage_from_cgroup_samples() {
@@ -370,17 +383,33 @@ compute_interface_metrics_json() {
     local snap1="$1" snap2="$2"
 
     awk '
+        function normalize_iface(name) {
+            sub(/@.*$/, "", name)
+            return name
+        }
+        function is_common_interface(name) {
+            name = normalize_iface(name)
+            if (name == "" || name == "lo") return 0
+            if (name ~ /^veth/ || name ~ /^fwbr/ || name ~ /^docker/ || name ~ /^br-/ || name ~ /^virbr/) return 0
+            if (name ~ /^(tap|tun|wg|dummy|nlmon|ifb|vnet|lxc)/) return 0
+            return name ~ /^(eth|ens|enp|eno|enx|em|wlan|wlp|bond)[0-9]+$/
+        }
         FNR == NR {
-            prev_rx_bytes[$1] = $2
-            prev_rx_packets[$1] = $3
-            prev_rx_errors[$1] = $4
-            prev_tx_bytes[$1] = $5
-            prev_tx_packets[$1] = $6
-            prev_tx_errors[$1] = $7
+            if ($1 == "" || !is_common_interface($1)) next
+            iface = normalize_iface($1)
+            prev_rx_bytes[iface] = $2
+            prev_rx_packets[iface] = $3
+            prev_rx_errors[iface] = $4
+            prev_tx_bytes[iface] = $5
+            prev_tx_packets[iface] = $6
+            prev_tx_errors[iface] = $7
             next
         }
-        $1 in prev_rx_bytes {
-            iface = $1
+        $1 == "" || !is_common_interface($1) { next }
+        {
+            iface = normalize_iface($1)
+            if (!(iface in prev_rx_bytes)) next
+
             rx_bytes = $2 - prev_rx_bytes[iface]
             rx_packets = $3 - prev_rx_packets[iface]
             rx_errors = $4 - prev_rx_errors[iface]
@@ -402,6 +431,7 @@ compute_interface_metrics_json() {
         split("\n")
         | map(select(length > 0))
         | map(split("\t"))
+        | map(select(.[0] | length > 0))
         | map({
             interfaceName: .[0],
             rxBytesPerSecond: (.[1] | tonumber),
