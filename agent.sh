@@ -314,6 +314,7 @@ lookup_diskstats_delta() {
                     sectors_read = parts[3]
                     read_ms = parts[4]
                     writes = parts[5]
+                    sectors_written = parts[6]
                     write_ms = parts[7]
                     io_ms = parts[8]
                     return 1
@@ -328,18 +329,21 @@ lookup_diskstats_delta() {
             prev_sectors_read = sectors_read
             prev_read_ms = read_ms
             prev_writes = writes
+            prev_sectors_written = sectors_written
             prev_write_ms = write_ms
             prev_io_ms = io_ms
 
             if (!find_stats(after, device)) exit 1
 
             read_bps = (sectors_read - prev_sectors_read) * sector_bytes
+            write_bps = (sectors_written - prev_sectors_written) * sector_bytes
             io_ms_delta = io_ms - prev_io_ms
             read_ms_delta = read_ms - prev_read_ms
             write_ms_delta = write_ms - prev_write_ms
             ios = (reads - prev_reads) + (writes - prev_writes)
 
             if (read_bps < 0) read_bps = 0
+            if (write_bps < 0) write_bps = 0
             if (io_ms_delta < 0) io_ms_delta = 0
             if (read_ms_delta < 0) read_ms_delta = 0
             if (write_ms_delta < 0) write_ms_delta = 0
@@ -348,16 +352,17 @@ lookup_diskstats_delta() {
             io_usage = io_ms_delta / 10
             io_wait = (ios > 0) ? (read_ms_delta + write_ms_delta) / ios : 0
 
-            printf "%d %.2f %.2f", read_bps, io_usage, io_wait
+            printf "%d %d %.2f %.2f", read_bps, write_bps, io_usage, io_wait
         }
     '
 }
 
-lookup_cgroup_read_bps() {
+lookup_cgroup_io_bps() {
     local before="$1" after="$2"
     awk -v before="$before" -v after="$after" '
         BEGIN {
-            total = 0
+            read_total = 0
+            write_total = 0
             n = split(after, after_lines, "\n")
             for (i = 1; i <= n; i++) {
                 if (after_lines[i] == "") continue
@@ -369,18 +374,20 @@ lookup_cgroup_read_bps() {
                     if (before_lines[j] == "") continue
                     split(before_lines[j], prev, " ")
                     if (prev[1] == key) {
-                        delta = curr[2] - prev[2]
-                        if (delta > 0) total += delta
+                        read_delta = curr[2] - prev[2]
+                        write_delta = curr[3] - prev[3]
+                        if (read_delta > 0) read_total += read_delta
+                        if (write_delta > 0) write_total += write_delta
                         break
                     }
                 }
             }
-            print total + 0
+            printf "%d %d\n", read_total + 0, write_total + 0
         }
     '
 }
 
-lookup_zfs_pool_read_bps() {
+lookup_zfs_pool_io_bps() {
     local pool="$1" before="$2" after="$3"
     awk -v pool="$pool" -v before="$before" -v after="$after" '
         function find_bytes(data, name,    lines, i, n, parts) {
@@ -390,6 +397,7 @@ lookup_zfs_pool_read_bps() {
                 split(lines[i], parts, "\t")
                 if (parts[1] == name) {
                     nread = parts[2]
+                    nwritten = parts[3]
                     return 1
                 }
             }
@@ -398,17 +406,20 @@ lookup_zfs_pool_read_bps() {
         BEGIN {
             if (!find_bytes(before, pool)) exit 1
             prev_nread = nread
+            prev_nwritten = nwritten
             if (!find_bytes(after, pool)) exit 1
-            delta = nread - prev_nread
-            if (delta < 0) delta = 0
-            print delta + 0
+            read_delta = nread - prev_nread
+            write_delta = nwritten - prev_nwritten
+            if (read_delta < 0) read_delta = 0
+            if (write_delta < 0) write_delta = 0
+            printf "%d %d\n", read_delta + 0, write_delta + 0
         }
     '
 }
 
 compute_disk_metrics_json() {
     local df_stats="$1" diskstats1="$2" diskstats2="$3" cgroup_io1="$4" cgroup_io2="$5" zfs_io1="$6" zfs_io2="$7"
-    local fs mount used total device io_line read_bps io_usage io_wait majmin cgroup_device zfs_pool
+    local fs mount used total device io_line read_bps write_bps io_usage io_wait majmin cgroup_device zfs_pool
 
     if [[ -n "$cgroup_io1" ]]; then
         majmin=$(awk 'NR == 1 { print $1; exit }' <<<"$cgroup_io1")
@@ -420,27 +431,30 @@ compute_disk_metrics_json() {
 
         device=""
         read_bps=0
+        write_bps=0
         io_usage="0.00"
         io_wait="0.00"
 
         if [[ "$fs" == /dev/* ]]; then
             device=$(basename "$fs")
             if io_line=$(lookup_diskstats_delta "$device" "$diskstats1" "$diskstats2"); then
-                read -r read_bps io_usage io_wait <<<"$io_line"
+                read -r read_bps write_bps io_usage io_wait <<<"$io_line"
             fi
         elif [[ -n "$zfs_io1" && -n "$zfs_io2" ]]; then
             zfs_pool="${fs%%/*}"
-            if read_bps=$(lookup_zfs_pool_read_bps "$zfs_pool" "$zfs_io1" "$zfs_io2"); then
-                :
+            if io_line=$(lookup_zfs_pool_io_bps "$zfs_pool" "$zfs_io1" "$zfs_io2"); then
+                read -r read_bps write_bps <<<"$io_line"
             fi
         elif [[ -n "$cgroup_io1" && -n "$cgroup_io2" ]]; then
-            read_bps=$(lookup_cgroup_read_bps "$cgroup_io1" "$cgroup_io2")
+            if io_line=$(lookup_cgroup_io_bps "$cgroup_io1" "$cgroup_io2"); then
+                read -r read_bps write_bps <<<"$io_line"
+            fi
         elif [[ -n "$cgroup_device" ]] && io_line=$(lookup_diskstats_delta "$cgroup_device" "$diskstats1" "$diskstats2"); then
-            read -r read_bps io_usage io_wait <<<"$io_line"
+            read -r read_bps write_bps io_usage io_wait <<<"$io_line"
         fi
 
-        printf '%s\t%d\t%d\t%d\t%s\t%s\n' \
-            "$fs" "$used" "$total" "$read_bps" "$io_usage" "$io_wait"
+        printf '%s\t%d\t%d\t%d\t%d\t%s\t%s\n' \
+            "$fs" "$used" "$total" "$read_bps" "$write_bps" "$io_usage" "$io_wait"
     done <<<"$df_stats" | jq -R -s '
         split("\n")
         | map(select(length > 0))
@@ -450,8 +464,9 @@ compute_disk_metrics_json() {
             usedBytes: (.[1] | tonumber),
             totalBytes: (.[2] | tonumber),
             ioReadBytesPerSecond: (.[3] | tonumber),
-            ioUsagePercent: (.[4] | tonumber),
-            ioWaitMilliseconds: (.[5] | tonumber)
+            ioWriteBytesPerSecond: (.[4] | tonumber),
+            ioUsagePercent: (.[5] | tonumber),
+            ioWaitMilliseconds: (.[6] | tonumber)
         })
     '
 }
