@@ -72,6 +72,13 @@ parse_args() {
 }
 
 prompt_token() {
+    if [[ -z "${INGEST_TOKEN:-}" && -r "$INSTALL_PATH" ]]; then
+        INGEST_TOKEN=$(sed -n 's/^export INGEST_TOKEN="\(.*\)"$/\1/p' "$INSTALL_PATH" | head -n1)
+        if [[ -n "${INGEST_TOKEN:-}" ]]; then
+            log "Using existing token from ${INSTALL_PATH}"
+        fi
+    fi
+
     if [[ -n "${INGEST_TOKEN:-}" ]]; then
         return
     fi
@@ -178,7 +185,10 @@ download_agent() {
     local dest="$1"
 
     log "Downloading agent from ${REPO_RAW_URL}"
-    curl -fsSL "$REPO_RAW_URL" -o "$dest"
+    curl -fsSL \
+        -H "Cache-Control: no-cache" \
+        "${REPO_RAW_URL}?t=$(date +%s)" \
+        -o "$dest"
 
     [[ -s "$dest" ]] || die "Downloaded agent script is empty."
     head -n1 "$dest" | grep -q '^#!/' || die "Downloaded file does not look like a shell script."
@@ -187,18 +197,27 @@ download_agent() {
 configure_token() {
     local src="$1"
     local dst="$2"
-    local escaped_token
+    local tmp escaped_token
 
     escaped_token=$(printf '%s' "$INGEST_TOKEN" | sed 's/[\\&|]/\\&/g')
-    sed "s|^export INGEST_TOKEN=\".*\"|export INGEST_TOKEN=\"${escaped_token}\"|" "$src" > "$dst"
-    chmod 755 "$dst"
+    tmp=$(mktemp)
+    sed "s|^export INGEST_TOKEN=\".*\"|export INGEST_TOKEN=\"${escaped_token}\"|" "$src" > "$tmp"
+    chmod 755 "$tmp"
+    mv -f "$tmp" "$dst"
 }
 
 install_agent() {
     local src="$1"
+    local had_existing=false
+
+    [[ -f "$INSTALL_PATH" ]] && had_existing=true
 
     log "Installing agent to ${INSTALL_PATH}"
     configure_token "$src" "$INSTALL_PATH"
+
+    if [[ "$had_existing" == true ]]; then
+        log "Agent updated."
+    fi
 }
 
 install_cron() {
