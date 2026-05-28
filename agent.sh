@@ -2,7 +2,7 @@
 
 export INGEST_TOKEN=""
 export API_URL="https://monitor.fascinated.cc/api/v1/servers/ingest"
-export AGENT_VERSION="1.1.2"
+export AGENT_VERSION="1.1.3"
 
 get_ip() {
     local ip
@@ -441,10 +441,10 @@ read_zfs_pool_io_rates() {
         /^[[:space:]]/ { next }
         $1 ~ /^\// { next }
         NF >= 7 {
+            read_iops = $4 + 0
+            write_iops = $5 + 0
             read_bps = $6 + 0
             write_bps = $7 + 0
-            read_iops = (NF >= 9) ? $8 + 0 : 0
-            write_iops = (NF >= 9) ? $9 + 0 : 0
             printf "%s\t%d\t%d\t%d\t%d\n", $1, read_bps, write_bps, read_iops, write_iops
         }
     ' "$path"
@@ -461,6 +461,8 @@ lookup_zfs_pool_io_rates() {
                 if (parts[1] == name) {
                     read_bps = parts[2]
                     write_bps = parts[3]
+                    read_iops = parts[4]
+                    write_iops = parts[5]
                     return 1
                 }
             }
@@ -468,7 +470,7 @@ lookup_zfs_pool_io_rates() {
         }
         BEGIN {
             if (!find_rates(rates, pool)) exit 1
-            printf "%d %d\n", read_bps + 0, write_bps + 0
+            printf "%d %d %d %d\n", read_bps + 0, write_bps + 0, read_iops + 0, write_iops + 0
         }
     '
 }
@@ -480,16 +482,25 @@ read_diskstats() {
 }
 
 build_zfs_pool_vdev_map() {
-    local pool path name
+    local pool path name resolved
 
     command -v zpool >/dev/null 2>&1 || return 0
 
     while IFS=$'\t' read -r pool path; do
         [[ -z "$pool" || -z "$path" ]] && continue
-        name=$(basename "$(readlink -f "$path" 2>/dev/null)" 2>/dev/null) || continue
+        resolved=$(resolve_diskstats_device_name "$path" 2>/dev/null || true)
+        if [[ -n "$resolved" ]]; then
+            name="$resolved"
+        else
+            name=$(basename "$(readlink -f "$path" 2>/dev/null)" 2>/dev/null) || continue
+        fi
         [[ -n "$name" ]] && printf '%s\t%s\n' "$pool" "$name"
     done < <(zpool status -P 2>/dev/null | awk '
-        /^  pool: / { pool = $2; next }
+        /^[[:space:]]*pool:[[:space:]]/ {
+            sub(/^[[:space:]]*pool:[[:space:]]*/, "")
+            pool = $1
+            next
+        }
         /\/dev\// && pool != "" {
             if (match($0, /\/dev\/[^[:space:]]+/)) {
                 print pool "\t" substr($0, RSTART, RLENGTH)
@@ -759,14 +770,18 @@ compute_disk_metrics_json() {
         if [[ "$disk_type" == "zfs" ]] && zfs_mount_gets_pool_io "$source" "$mount"; then
             if [[ -n "$zfs_io_rates" ]] \
                 && io_line=$(lookup_zfs_pool_io_rates "$zfs_pool" "$zfs_io_rates"); then
-                read -r read_bps write_bps <<<"$io_line"
+                read -r read_bps write_bps read_iops write_iops <<<"$io_line"
             elif [[ -n "$zfs_io1" && -n "$zfs_io2" ]] \
                 && io_line=$(lookup_zfs_pool_io_bps "$zfs_pool" "$zfs_io1" "$zfs_io2"); then
                 read -r read_bps write_bps <<<"$io_line"
             fi
             if [[ -n "$zfs_vdev_map" ]] \
                 && io_line=$(lookup_zfs_pool_vdev_disk_stats "$zfs_pool" "$diskstats1" "$diskstats2" "$zfs_vdev_map"); then
-                read -r io_usage io_wait read_iops write_iops read_lat write_lat <<<"$io_line"
+                read -r io_usage io_wait vdev_read_iops vdev_write_iops read_lat write_lat <<<"$io_line"
+                if (( vdev_read_iops + vdev_write_iops > 0 )); then
+                    read_iops=$vdev_read_iops
+                    write_iops=$vdev_write_iops
+                fi
             fi
         elif [[ "$disk_type" == "block" ]]; then
             device=$(resolve_diskstats_device_name "$source" || basename "$source")
@@ -889,7 +904,7 @@ sample_rate_metrics() {
     diskstats1=$(read_diskstats)
     cgroup_io1=$(read_cgroup_io_stats)
     zfs_io1=$(read_zfs_pool_io_snapshot)
-    if [[ -z "$zfs_io1" ]]; then
+    if command -v zpool >/dev/null 2>&1; then
         read -r zfs_iostat_tmp zfs_iostat_pid < <(start_zfs_pool_io_rates_sample || true)
     fi
     cpu_line1=$(read_cpu_stat_line)
@@ -1072,9 +1087,10 @@ read_zfs_pool_status_data() {
                 printf "%s\t%s\t%.2f\t%d\n", pool, scan_state, scan_pct, cksum
             }
         }
-        /^  pool: / {
+        /^[[:space:]]*pool:[[:space:]]/ {
             emit()
-            pool = $2
+            sub(/^[[:space:]]*pool:[[:space:]]*/, "")
+            pool = $1
             scan_state = "NONE"
             scan_pct = 0
             cksum = 0
