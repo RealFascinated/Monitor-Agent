@@ -358,37 +358,23 @@ read_disk_space_stats() {
         nfs nfs4 cifs smb3 9p ceph cephfs glusterfs vmhgfs vboxsf
     )
     local -a df_args=(-B1 -PT)
-    local -a df_inode_args=(-PT)
+    local -a df_inode_args=(-iPT)
 
     for fstype in "${df_exclude[@]}"; do
         df_args+=(-x "$fstype")
         df_inode_args+=(-x "$fstype")
     done
 
-    df "${df_args[@]}" 2>/dev/null | awk -v inode_data="$(df "${df_inode_args[@]}" 2>/dev/null)" '
-        function mount_inode_used(mount,    lines, i, n, parts) {
-            n = split(inode_data, lines, "\n")
-            for (i = 2; i <= n; i++) {
-                if (lines[i] == "") continue
-                nf = split(lines[i], parts, " ")
-                if (parts[nf] == mount) {
-                    return parts[3] + 0
-                }
-            }
-            return 0
+    awk '
+        FNR == NR {
+            if (FNR == 1) next
+            mount = $NF
+            inode_total[mount] = $3 + 0
+            inode_used[mount] = $4 + 0
+            next
         }
-        function mount_inode_total(mount,    lines, i, n, parts) {
-            n = split(inode_data, lines, "\n")
-            for (i = 2; i <= n; i++) {
-                if (lines[i] == "") continue
-                nf = split(lines[i], parts, " ")
-                if (parts[nf] == mount) {
-                    return parts[2] + 0
-                }
-            }
-            return 0
-        }
-        NR > 1 {
+        FNR == 1 { next }
+        {
             source = $1
             fstype = $2
             used = $4 + 0
@@ -412,11 +398,11 @@ read_disk_space_stats() {
                 next
             }
 
-            inode_used = mount_inode_used(mount)
-            inode_total = mount_inode_total(mount)
-            printf "%s\t%s\t%d\t%d\t%s\t%d\t%d\n", mount, source, used, total, disk_type, inode_used, inode_total
+            printf "%s\t%s\t%d\t%d\t%s\t%d\t%d\n", \
+                mount, source, used, total, disk_type, \
+                inode_used[mount] + 0, inode_total[mount] + 0
         }
-    '
+    ' <(df "${df_inode_args[@]}" 2>/dev/null) <(df "${df_args[@]}" 2>/dev/null)
 }
 
 read_zfs_pool_io_snapshot() {
