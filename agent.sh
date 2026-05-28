@@ -73,6 +73,75 @@ get_thread_count() {
     get_online_cpu_count
 }
 
+get_cpu_model() {
+    local model
+
+    if command -v lscpu >/dev/null 2>&1; then
+        model=$(lscpu 2>/dev/null | awk -F: '/Model name:/ { sub(/^[ \t]+/, "", $2); print $2; exit }')
+        if [[ -n "$model" ]]; then
+            echo "$model"
+            return
+        fi
+    fi
+
+    model=$(awk -F: '/model name/ { sub(/^ /, "", $2); print $2; exit }' /proc/cpuinfo)
+    if [[ -n "$model" ]]; then
+        echo "$model"
+        return
+    fi
+
+    model=$(awk -F: '/^Hardware/ { sub(/^ /, "", $2); print $2; exit }' /proc/cpuinfo)
+    if [[ -n "$model" ]]; then
+        echo "$model"
+        return
+    fi
+
+    echo "unknown"
+}
+
+get_socket_count() {
+    local sockets
+
+    if command -v lscpu >/dev/null 2>&1; then
+        sockets=$(lscpu 2>/dev/null | awk '/^Socket\(s\):/ { print $2; exit }')
+        if [[ "$sockets" =~ ^[0-9]+$ ]]; then
+            echo "$sockets"
+            return
+        fi
+    fi
+
+    sockets=$(awk '/^physical id/ { ids[$4] = 1 } END { print length(ids) }' /proc/cpuinfo)
+    if [[ "$sockets" =~ ^[0-9]+$ && "$sockets" -gt 0 ]]; then
+        echo "$sockets"
+        return
+    fi
+
+    echo 1
+}
+
+get_cpu_clock_mhz() {
+    local mhz
+
+    if command -v lscpu >/dev/null 2>&1; then
+        mhz=$(lscpu 2>/dev/null | awk '/^CPU max MHz:/ { print $4; exit }')
+        if [[ -z "$mhz" || "$mhz" == "0.0000" ]]; then
+            mhz=$(lscpu 2>/dev/null | awk '/^CPU MHz:/ { print $3; exit }')
+        fi
+        if [[ "$mhz" =~ ^[0-9.]+$ && "$mhz" != "0" && "$mhz" != "0.0" ]]; then
+            printf "%.2f" "$mhz"
+            return
+        fi
+    fi
+
+    awk '/^cpu MHz/ {
+        if ($4 + 0 > max) max = $4 + 0
+    }
+    END {
+        if (max > 0) printf "%.2f", max
+        else print "0"
+    }' /proc/cpuinfo
+}
+
 get_os_name() {
     if [[ -r /etc/os-release ]]; then
         # shellcheck disable=SC1091
@@ -99,6 +168,13 @@ get_uptime_seconds() {
     awk '{print int($1)}' /proc/uptime
 }
 
+read_cpu_stat_line() {
+    awk '/^cpu / {
+        print $2, $3, $4, $5, $6, $7, $8, $9
+        exit
+    }' /proc/stat
+}
+
 read_cpu_stat() {
     awk '/^cpu / {
         idle = $5 + $6
@@ -106,6 +182,39 @@ read_cpu_stat() {
         print idle, total
         exit
     }' /proc/stat
+}
+
+compute_cpu_metrics_from_proc_stat_samples() {
+    local before="$1" after="$2"
+    awk -v before="$before" -v after="$after" '
+        function delta(curr, prev,    d) {
+            d = curr - prev
+            return (d > 0) ? d : 0
+        }
+        BEGIN {
+            split(before, b, " ")
+            split(after, a, " ")
+            du_user = delta(a[1], b[1])
+            du_nice = delta(a[2], b[2])
+            du_sys = delta(a[3], b[3])
+            du_idle = delta(a[4], b[4])
+            du_iow = delta(a[5], b[5])
+            du_irq = delta(a[6], b[6])
+            du_soft = delta(a[7], b[7])
+            du_steal = delta(a[8], b[8])
+            total = du_user + du_nice + du_sys + du_idle + du_iow + du_irq + du_soft + du_steal
+            if (total <= 0) {
+                printf "0 0 0 0 0 0"
+                exit
+            }
+            usage = (total - du_idle) / total * 100
+            user_pct = (du_user + du_nice) / total * 100
+            sys_pct = (du_sys + du_irq + du_soft) / total * 100
+            iow_pct = du_iow / total * 100
+            steal_pct = du_steal / total * 100
+            printf "%.2f %.2f %.2f %.2f %.2f %.2f", usage, user_pct, sys_pct, iow_pct, steal_pct
+        }
+    '
 }
 
 read_cgroup_cpu_usage_usec() {
@@ -213,58 +322,56 @@ compute_cpu_usage_from_cgroup_samples() {
         'BEGIN { printf "%.2f", delta / capacity * 100 }'
 }
 
-read_zfs_pool_space_stats() {
-    if command -v zpool >/dev/null 2>&1; then
-        zpool list -Hp -o name,size,allocated 2>/dev/null | awk '$2 > 0 {
-            printf "%s\t%s\t%d\t%d\tzfs\n", $1, $1, $3, $2
-        }'
-        return
-    fi
+zfs_mount_gets_pool_io() {
+    local source="$1" mount="$2"
+    local pool="${source%%/*}"
 
-    df -B1 -P -t zfs 2>/dev/null | awk '
-        NR > 1 {
-            total = $3 + $4
-            if (total <= 0) next
-            split($1, parts, "/")
-            pool = parts[1]
-            if (!(pool in seen)) {
-                seen[pool] = 1
-                printf "%s\t%s\t%d\t%d\tzfs\n", pool, $6, $3, total
-            }
-        }
-    '
+    [[ "$mount" == "/" ]] && return 0
+    [[ "$source" == "$pool" ]] && return 0
+    return 1
 }
 
 read_disk_space_stats() {
-    local zfs_stats df_stats
     local -a df_exclude=(
-        tmpfs devtmpfs overlay squashfs efivarfs zfs fuse fusectl shfs
+        tmpfs devtmpfs overlay squashfs efivarfs fuse fusectl shfs
         autofs nsfs binfmt_misc tracefs debugfs securityfs pstore
         hugetlbfs mqueue configfs rpc_pipefs
         nfs nfs4 cifs smb3 9p ceph cephfs glusterfs vmhgfs vboxsf
     )
-    local df_args=(-B1 -P)
+    local df_args=(-B1 -PT)
 
     for fstype in "${df_exclude[@]}"; do
         df_args+=(-x "$fstype")
     done
 
-    zfs_stats=$(read_zfs_pool_space_stats)
-    df_stats=$(df "${df_args[@]}" 2>/dev/null | awk '
+    df "${df_args[@]}" 2>/dev/null | awk '
         NR > 1 {
-            total = $3 + $4
-            if (total <= 0) next
-            if ($1 ~ /^[0-9]+(\.[0-9]+){3}:/ ) next
-            if ($1 ~ /^[^/]+@/ ) next
-            if ($1 ~ /^\/dev\/(zd|fuse|loop)/ ) next
-            if ($1 ~ /^(shfs|mergerfs|portal|rclone|vmhgfs|vboxsf)/ ) next
-            if ($6 ~ /^\/(run|dev|sys|proc|snap)(\/|$)/ ) next
-            if ($6 ~ /^\/var\/lib\/(docker|containerd|lxc|libvirt)(\/|$)/ ) next
-            printf "%s\t%s\t%d\t%d\tblock\n", $1, $6, $3, total
-        }
-    ')
+            source = $1
+            fstype = $2
+            used = $4 + 0
+            avail = $5 + 0
+            mount = $7
+            total = used + avail
 
-    printf '%s\n%s\n' "$zfs_stats" "$df_stats" | awk 'NF'
+            if (total <= 0) next
+            if (source ~ /^[0-9]+(\.[0-9]+){3}:/ ) next
+            if (source ~ /^[^/]+@/ ) next
+            if (source ~ /^\/dev\/(zd|fuse|loop)/ ) next
+            if (source ~ /^(shfs|mergerfs|portal|rclone|vmhgfs|vboxsf)/ ) next
+            if (mount ~ /^\/(run|dev|sys|proc|snap)(\/|$)/ ) next
+            if (mount ~ /^\/var\/lib\/(docker|containerd|lxc|libvirt)(\/|$)/ ) next
+
+            if (fstype == "zfs") {
+                disk_type = "zfs"
+            } else if (source ~ /^\//) {
+                disk_type = "block"
+            } else {
+                next
+            }
+
+            printf "%s\t%s\t%d\t%d\t%s\n", mount, source, used, total, disk_type
+        }
+    '
 }
 
 read_zfs_pool_io_snapshot() {
@@ -576,36 +683,37 @@ lookup_zfs_pool_io_bps() {
 
 compute_disk_metrics_json() {
     local df_stats="$1" diskstats1="$2" diskstats2="$3" cgroup_io1="$4" cgroup_io2="$5" zfs_io1="$6" zfs_io2="$7" zfs_io_rates="$8" zfs_vdev_map="$9"
-    local fs mount used total disk_type device io_line read_bps write_bps io_usage io_wait majmin cgroup_device zfs_pool
+    local mount source used total disk_type device io_line read_bps write_bps io_usage io_wait majmin cgroup_device zfs_pool
 
     if [[ -n "$cgroup_io1" ]]; then
         majmin=$(awk 'NR == 1 { print $1; exit }' <<<"$cgroup_io1")
         cgroup_device=$(resolve_block_device_name "$majmin" 2>/dev/null || true)
     fi
 
-    while IFS=$'\t' read -r fs mount used total disk_type; do
-        [[ -z "$fs" ]] && continue
+    while IFS=$'\t' read -r mount source used total disk_type; do
+        [[ -z "$mount" ]] && continue
 
         device=""
         read_bps=0
         write_bps=0
         io_usage="0.00"
         io_wait="0.00"
+        zfs_pool="${source%%/*}"
 
-        if [[ "$disk_type" == "zfs" ]]; then
+        if [[ "$disk_type" == "zfs" ]] && zfs_mount_gets_pool_io "$source" "$mount"; then
             if [[ -n "$zfs_io_rates" ]] \
-                && io_line=$(lookup_zfs_pool_io_rates "$fs" "$zfs_io_rates"); then
+                && io_line=$(lookup_zfs_pool_io_rates "$zfs_pool" "$zfs_io_rates"); then
                 read -r read_bps write_bps <<<"$io_line"
             elif [[ -n "$zfs_io1" && -n "$zfs_io2" ]] \
-                && io_line=$(lookup_zfs_pool_io_bps "$fs" "$zfs_io1" "$zfs_io2"); then
+                && io_line=$(lookup_zfs_pool_io_bps "$zfs_pool" "$zfs_io1" "$zfs_io2"); then
                 read -r read_bps write_bps <<<"$io_line"
             fi
             if [[ -n "$zfs_vdev_map" ]] \
-                && io_line=$(lookup_zfs_pool_vdev_io_util "$fs" "$diskstats1" "$diskstats2" "$zfs_vdev_map"); then
+                && io_line=$(lookup_zfs_pool_vdev_io_util "$zfs_pool" "$diskstats1" "$diskstats2" "$zfs_vdev_map"); then
                 read -r io_usage io_wait <<<"$io_line"
             fi
-        elif [[ "$fs" == /dev/* ]]; then
-            device=$(resolve_diskstats_device_name "$fs" || basename "$fs")
+        elif [[ "$disk_type" == "block" ]]; then
+            device=$(resolve_diskstats_device_name "$source" || basename "$source")
             if io_line=$(lookup_diskstats_delta "$device" "$diskstats1" "$diskstats2"); then
                 read -r read_bps write_bps io_usage io_wait <<<"$io_line"
             fi
@@ -618,7 +726,7 @@ compute_disk_metrics_json() {
         fi
 
         printf '%s\t%d\t%d\t%d\t%d\t%s\t%s\n' \
-            "$fs" "$used" "$total" "$read_bps" "$write_bps" "$io_usage" "$io_wait"
+            "$mount" "$used" "$total" "$read_bps" "$write_bps" "$io_usage" "$io_wait"
     done <<<"$df_stats" | jq -R -s '
         split("\n")
         | map(select(length > 0))
@@ -704,7 +812,7 @@ sample_rate_metrics() {
     local cgroup_dir cpu_usage1 cpu_usage2 net_snap1 net_snap2
     local diskstats1 diskstats2 cgroup_io1 cgroup_io2 zfs_io1 zfs_io2 zfs_io_rates zfs_vdev_map df_stats
     local zfs_iostat_tmp="" zfs_iostat_pid=""
-    local idle1 total1 idle2 total2 cpu_usage interface_metrics disk_metrics
+    local cpu_line1 cpu_line2 cpu_metrics interface_metrics disk_metrics
 
     cgroup_dir=$(get_cgroup_dir)
     if [[ -n "$cgroup_dir" && -r "$cgroup_dir/cpu.stat" ]]; then
@@ -719,13 +827,13 @@ sample_rate_metrics() {
     if [[ -z "$zfs_io1" ]]; then
         read -r zfs_iostat_tmp zfs_iostat_pid < <(start_zfs_pool_io_rates_sample || true)
     fi
-    read -r idle1 total1 < <(read_cpu_stat)
+    cpu_line1=$(read_cpu_stat_line)
     net_snap1=$(read_network_stats)
     sleep 1
 
     if [[ -n "$cpu_usage1" ]]; then
         cpu_usage2=$(read_cgroup_cpu_usage_usec "$cgroup_dir")
-        cpu_usage=$(compute_cpu_usage_from_cgroup_samples "$cpu_usage1" "$cpu_usage2") || cpu_usage=""
+        RATE_CPU_USAGE=$(compute_cpu_usage_from_cgroup_samples "$cpu_usage1" "$cpu_usage2") || RATE_CPU_USAGE=""
     fi
 
     diskstats2=$(read_diskstats)
@@ -737,19 +845,40 @@ sample_rate_metrics() {
     else
         zfs_io2=$(read_zfs_pool_io_snapshot)
     fi
-    read -r idle2 total2 < <(read_cpu_stat)
+    cpu_line2=$(read_cpu_stat_line)
     net_snap2=$(read_network_stats)
 
-    if [[ -z "$cpu_usage" ]]; then
-        cpu_usage=$(compute_cpu_usage_from_proc_stat_samples "$idle1" "$total1" "$idle2" "$total2")
+    read -r _cpu_usage RATE_CPU_USER RATE_CPU_SYSTEM RATE_CPU_IOWAIT RATE_CPU_STEAL \
+        < <(compute_cpu_metrics_from_proc_stat_samples "$cpu_line1" "$cpu_line2")
+    if [[ -z "${RATE_CPU_USAGE:-}" ]]; then
+        RATE_CPU_USAGE="$_cpu_usage"
     fi
+
+    read -r RATE_LOAD1 RATE_LOAD5 RATE_LOAD15 < <(get_load_averages)
 
     interface_metrics=$(compute_interface_metrics_json "$net_snap1" "$net_snap2")
     disk_metrics=$(compute_disk_metrics_json "$df_stats" "$diskstats1" "$diskstats2" "$cgroup_io1" "$cgroup_io2" "$zfs_io1" "$zfs_io2" "$zfs_io_rates" "$zfs_vdev_map")
 
-    RATE_CPU_USAGE="$cpu_usage"
     RATE_INTERFACE_METRICS="$interface_metrics"
     RATE_DISK_METRICS="$disk_metrics"
+}
+
+get_load_averages() {
+    awk '{ printf "%.2f %.2f %.2f", $1, $2, $3 }' /proc/loadavg
+}
+
+read_memory_extras() {
+    awk '
+        /^Buffers:/ { buffers = $2 * 1024 }
+        /^Cached:/ { cached = $2 * 1024 }
+        /^SwapTotal:/ { swap_total = $2 * 1024 }
+        /^SwapFree:/ { swap_free = $2 * 1024 }
+        END {
+            swap_used = swap_total - swap_free
+            if (swap_used < 0) swap_used = 0
+            printf "%d %d %d %d\n", buffers + 0, cached + 0, swap_used + 0, swap_total + 0
+        }
+    ' /proc/meminfo
 }
 
 get_memory_total() {
@@ -788,7 +917,10 @@ get_memory_usage() {
 }
 
 build_payload() {
+    local mem_buffers mem_cached swap_used swap_total
+
     sample_rate_metrics
+    read -r mem_buffers mem_cached swap_used swap_total < <(read_memory_extras)
 
     jq -n \
         --arg ip "$(get_ip)" \
@@ -797,9 +929,23 @@ build_payload() {
         --arg osName "$(get_os_name)" \
         --arg osVersion "$(get_os_version)" \
         --argjson uptimeSeconds "$(get_uptime_seconds)" \
-        --argjson cpuUsage "$RATE_CPU_USAGE" \
+        --arg cpuModel "$(get_cpu_model)" \
+        --argjson socketCount "$(get_socket_count)" \
+        --argjson cpuClockMhz "$(get_cpu_clock_mhz)" \
+        --argjson cpuUsage "${RATE_CPU_USAGE:-0}" \
         --argjson memoryUsage "$(get_memory_usage)" \
         --argjson memoryTotal "$(get_memory_total)" \
+        --argjson load1 "${RATE_LOAD1:-0}" \
+        --argjson load5 "${RATE_LOAD5:-0}" \
+        --argjson load15 "${RATE_LOAD15:-0}" \
+        --argjson cpuUserPercent "${RATE_CPU_USER:-0}" \
+        --argjson cpuSystemPercent "${RATE_CPU_SYSTEM:-0}" \
+        --argjson cpuIowaitPercent "${RATE_CPU_IOWAIT:-0}" \
+        --argjson cpuStealPercent "${RATE_CPU_STEAL:-0}" \
+        --argjson memoryBuffers "$mem_buffers" \
+        --argjson memoryCached "$mem_cached" \
+        --argjson swapUsed "$swap_used" \
+        --argjson swapTotal "$swap_total" \
         --argjson interfaceMetrics "$RATE_INTERFACE_METRICS" \
         --argjson diskMetrics "$RATE_DISK_METRICS" \
         '{
@@ -809,12 +955,26 @@ build_payload() {
                 threadCount: $threadCount,
                 osName: $osName,
                 osVersion: $osVersion,
-                uptimeSeconds: $uptimeSeconds
+                uptimeSeconds: $uptimeSeconds,
+                cpuModel: $cpuModel,
+                socketCount: $socketCount,
+                cpuClockMhz: $cpuClockMhz
             },
             serverMetrics: {
                 cpuUsage: $cpuUsage,
                 memoryUsage: $memoryUsage,
-                memoryTotal: $memoryTotal
+                memoryTotal: $memoryTotal,
+                load1: $load1,
+                load5: $load5,
+                load15: $load15,
+                cpuUserPercent: $cpuUserPercent,
+                cpuSystemPercent: $cpuSystemPercent,
+                cpuIowaitPercent: $cpuIowaitPercent,
+                cpuStealPercent: $cpuStealPercent,
+                memoryBuffers: $memoryBuffers,
+                memoryCached: $memoryCached,
+                swapUsed: $swapUsed,
+                swapTotal: $swapTotal
             },
             interfaceMetrics: $interfaceMetrics,
             diskMetrics: $diskMetrics
