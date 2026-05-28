@@ -2,7 +2,7 @@
 
 export INGEST_TOKEN=""
 export API_URL="https://monitor.fascinated.cc/api/v1/servers/ingest"
-export AGENT_VERSION="1.1.1"
+export AGENT_VERSION="1.1.2"
 
 get_ip() {
     local ip
@@ -475,7 +475,7 @@ lookup_zfs_pool_io_rates() {
 
 read_diskstats() {
     awk '$3 !~ /^(loop|ram|fd|zram)/ {
-        print $3, $4, $6, $7, $8, $10, $11, $13, $14
+        print $3, $4, $6, $7, $8, $10, $11, $13
     }' /proc/diskstats
 }
 
@@ -592,7 +592,6 @@ lookup_diskstats_delta() {
                     sectors_written = parts[6]
                     write_ms = parts[7]
                     io_ms = parts[8]
-                    weighted_io_ms = parts[9]
                     return 1
                 }
             }
@@ -608,13 +607,12 @@ lookup_diskstats_delta() {
             prev_sectors_written = sectors_written
             prev_write_ms = write_ms
             prev_io_ms = io_ms
-            prev_weighted_io_ms = weighted_io_ms
 
             if (!find_stats(after, device)) exit 1
 
             read_bps = (sectors_read - prev_sectors_read) * sector_bytes
             write_bps = (sectors_written - prev_sectors_written) * sector_bytes
-            weighted_io_ms_delta = weighted_io_ms - prev_weighted_io_ms
+            io_ms_delta = io_ms - prev_io_ms
             read_ms_delta = read_ms - prev_read_ms
             write_ms_delta = write_ms - prev_write_ms
             read_iops = reads - prev_reads
@@ -622,13 +620,14 @@ lookup_diskstats_delta() {
 
             if (read_bps < 0) read_bps = 0
             if (write_bps < 0) write_bps = 0
-            if (weighted_io_ms_delta < 0) weighted_io_ms_delta = 0
+            if (io_ms_delta < 0) io_ms_delta = 0
             if (read_ms_delta < 0) read_ms_delta = 0
             if (write_ms_delta < 0) write_ms_delta = 0
             if (read_iops < 0) read_iops = 0
             if (write_iops < 0) write_iops = 0
 
-            io_usage = weighted_io_ms_delta / 10
+            # Field 13: ms with at least one I/O in flight over the sample window → 0–100%.
+            io_usage = io_ms_delta / 10
             io_wait = (read_iops + write_iops > 0) ? (read_ms_delta + write_ms_delta) / (read_iops + write_iops) : 0
             read_latency = (read_iops > 0) ? read_ms_delta / read_iops : 0
             write_latency = (write_iops > 0) ? write_ms_delta / write_iops : 0
