@@ -28,6 +28,8 @@ is_container() {
 get_cgroup_dir() {
     local dir="/sys/fs/cgroup"
 
+    is_container || return 0
+
     if [[ -r "$dir/cpu.stat" || -r "$dir/memory.current" ]]; then
         echo "$dir"
     fi
@@ -114,6 +116,12 @@ get_cpu_capacity_usec_per_second() {
     local cgroup_dir="$1" online_cpus quota period quota_capacity
 
     online_cpus=$(get_online_cpu_count)
+
+    if [[ ! -r "$cgroup_dir/cpu.max" ]]; then
+        echo $((online_cpus * 1000000))
+        return
+    fi
+
     read -r quota period < "$cgroup_dir/cpu.max"
 
     if [[ "$quota" != "max" && "$period" =~ ^[0-9]+$ && "$period" -gt 0 ]]; then
