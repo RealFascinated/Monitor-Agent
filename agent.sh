@@ -2,7 +2,7 @@
 
 export INGEST_TOKEN=""
 export API_URL="https://monitor.fascinated.cc/api/v1/servers/ingest"
-export AGENT_VERSION="1.1.3"
+export AGENT_VERSION="1.1.4"
 
 get_ip() {
     local ip
@@ -920,12 +920,11 @@ sample_rate_metrics() {
 
     diskstats2=$(read_diskstats)
     cgroup_io2=$(read_cgroup_io_stats)
+    zfs_io2=$(read_zfs_pool_io_snapshot)
     if [[ -n "$zfs_iostat_tmp" ]]; then
         wait "$zfs_iostat_pid" 2>/dev/null || true
         RATE_ZFS_POOL_IO=$(read_zfs_pool_io_rates "$zfs_iostat_tmp")
         rm -f "$zfs_iostat_tmp"
-    else
-        zfs_io2=$(read_zfs_pool_io_snapshot)
     fi
     cpu_line2=$(read_cpu_stat_line)
     stat_counters2=$(read_proc_stat_counters)
@@ -1163,24 +1162,31 @@ compute_zfs_pool_metrics_json() {
             next
         }
         section == "" && NF >= 6 {
-            pool = $1
-            total = $2 + 0
-            alloc = $3 + 0
-            free = $4 + 0
-            cap = $5 + 0
-            health = $6
-            frag = (NF >= 7) ? $7 + 0 : 0
-            idx = lookup_status(pool)
-            scan_state = (idx > 0) ? status_scan[idx] : "NONE"
-            scan_pct = (idx > 0) ? status_pct[idx] : 0
-            cksum = (idx > 0) ? status_cksum[idx] : 0
-            ioidx = lookup_io(pool)
-            read_bps = (ioidx > 0) ? io_read_bps[ioidx] : 0
-            write_bps = (ioidx > 0) ? io_write_bps[ioidx] : 0
-            read_iops = (ioidx > 0) ? io_read_iops[ioidx] : 0
-            write_iops = (ioidx > 0) ? io_write_iops[ioidx] : 0
-            print pool, health, cap, alloc, free, total, frag, scan_state, scan_pct, \
-                read_bps, write_bps, read_iops, write_iops, cksum
+            pool_count++
+            pool_name[pool_count] = $1
+            pool_total[pool_count] = $2 + 0
+            pool_alloc[pool_count] = $3 + 0
+            pool_free[pool_count] = $4 + 0
+            pool_cap[pool_count] = $5 + 0
+            pool_health[pool_count] = $6
+            pool_frag[pool_count] = (NF >= 7) ? $7 + 0 : 0
+            next
+        }
+        END {
+            for (i = 1; i <= pool_count; i++) {
+                pool = pool_name[i]
+                idx = lookup_status(pool)
+                scan_state = (idx > 0) ? status_scan[idx] : "NONE"
+                scan_pct = (idx > 0) ? status_pct[idx] : 0
+                cksum = (idx > 0) ? status_cksum[idx] : 0
+                ioidx = lookup_io(pool)
+                read_bps = (ioidx > 0) ? io_read_bps[ioidx] : 0
+                write_bps = (ioidx > 0) ? io_write_bps[ioidx] : 0
+                read_iops = (ioidx > 0) ? io_read_iops[ioidx] : 0
+                write_iops = (ioidx > 0) ? io_write_iops[ioidx] : 0
+                print pool, pool_health[i], pool_cap[i], pool_alloc[i], pool_free[i], pool_total[i], \
+                    pool_frag[i], scan_state, scan_pct, read_bps, write_bps, read_iops, write_iops, cksum
+            }
         }
     ' | jq -R -s '
         split("\n")
