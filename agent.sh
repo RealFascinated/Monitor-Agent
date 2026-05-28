@@ -192,11 +192,12 @@ compute_cpu_usage_from_cgroup_samples() {
 }
 
 read_disk_space_stats() {
-    df -B1 -P \
-        -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs | awk '
-        NR > 1 {
+    df -B1 -P / | awk '
+        NR > 1 && $6 == "/" {
             total = $3 + $4
             if (total <= 0) next
+            if ($1 ~ /^[0-9]+(\.[0-9]+){3}:/ ) next
+            if ($1 ~ /^\/dev\/zd/) next
             printf "%s\t%s\t%d\t%d\n", $1, $6, $3, total
         }
     '
