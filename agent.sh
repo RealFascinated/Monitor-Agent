@@ -2,7 +2,7 @@
 
 export INGEST_TOKEN=""
 export API_URL="https://monitor.fascinated.cc/api/v1/servers/ingest"
-export AGENT_VERSION="1.0.0"
+export AGENT_VERSION="1.1.0"
 
 get_ip() {
     local ip
@@ -441,7 +441,11 @@ read_zfs_pool_io_rates() {
         /^[[:space:]]/ { next }
         $1 ~ /^\// { next }
         NF >= 7 {
-            printf "%s\t%d\t%d\n", $1, $6 + 0, $7 + 0
+            read_bps = $6 + 0
+            write_bps = $7 + 0
+            read_iops = (NF >= 9) ? $8 + 0 : 0
+            write_iops = (NF >= 9) ? $9 + 0 : 0
+            printf "%s\t%d\t%d\t%d\t%d\n", $1, read_bps, write_bps, read_iops, write_iops
         }
     ' "$path"
 }
@@ -870,11 +874,12 @@ compute_interface_metrics_json() {
 
 sample_rate_metrics() {
     local cgroup_dir cpu_usage1 cpu_usage2 net_snap1 net_snap2
-    local diskstats1 diskstats2 cgroup_io1 cgroup_io2 zfs_io1 zfs_io2 zfs_io_rates zfs_vdev_map df_stats
+    local diskstats1 diskstats2 cgroup_io1 cgroup_io2 zfs_io1 zfs_io2 zfs_vdev_map df_stats
     local zfs_iostat_tmp="" zfs_iostat_pid=""
     local cpu_line1 cpu_line2 cpu_metrics interface_metrics disk_metrics
-    local stat_counters1 stat_counters2
+    local stat_counters1 stat_counters2 arc_snap1 arc_snap2
 
+    RATE_ZFS_POOL_IO=""
     cgroup_dir=$(get_cgroup_dir)
     if [[ -n "$cgroup_dir" && -r "$cgroup_dir/cpu.stat" ]]; then
         cpu_usage1=$(read_cgroup_cpu_usage_usec "$cgroup_dir")
@@ -890,6 +895,7 @@ sample_rate_metrics() {
     fi
     cpu_line1=$(read_cpu_stat_line)
     stat_counters1=$(read_proc_stat_counters)
+    arc_snap1=$(read_zfs_arc_snapshot || true)
     net_snap1=$(read_network_stats)
     sleep 1
 
@@ -902,13 +908,14 @@ sample_rate_metrics() {
     cgroup_io2=$(read_cgroup_io_stats)
     if [[ -n "$zfs_iostat_tmp" ]]; then
         wait "$zfs_iostat_pid" 2>/dev/null || true
-        zfs_io_rates=$(read_zfs_pool_io_rates "$zfs_iostat_tmp")
+        RATE_ZFS_POOL_IO=$(read_zfs_pool_io_rates "$zfs_iostat_tmp")
         rm -f "$zfs_iostat_tmp"
     else
         zfs_io2=$(read_zfs_pool_io_snapshot)
     fi
     cpu_line2=$(read_cpu_stat_line)
     stat_counters2=$(read_proc_stat_counters)
+    arc_snap2=$(read_zfs_arc_snapshot || true)
     net_snap2=$(read_network_stats)
 
     read -r _cpu_usage RATE_CPU_USER RATE_CPU_SYSTEM RATE_CPU_IOWAIT RATE_CPU_STEAL \
@@ -921,8 +928,17 @@ sample_rate_metrics() {
     read -r RATE_CONTEXT_SWITCHES RATE_INTERRUPTS \
         < <(compute_kernel_stat_rates "$stat_counters1" "$stat_counters2")
 
+    if [[ -n "$arc_snap1" && -n "$arc_snap2" ]]; then
+        read -r _arc_size _arc_c _arc_cmin _arc_cmax _arc_data _arc_meta _arc_l2 _arc_hits _arc_misses \
+            ZFS_ARC_HIT_RATIO ZFS_ARC_MISSES_PER_SEC \
+            < <(compute_zfs_arc_rates "$arc_snap1" "$arc_snap2")
+        ZFS_ARC_SNAP="$_arc_size $_arc_c $_arc_cmin $_arc_cmax $_arc_data $_arc_meta $_arc_l2 $_arc_hits $_arc_misses"
+    else
+        ZFS_ARC_SNAP=""
+    fi
+
     interface_metrics=$(compute_interface_metrics_json "$net_snap1" "$net_snap2")
-    disk_metrics=$(compute_disk_metrics_json "$df_stats" "$diskstats1" "$diskstats2" "$cgroup_io1" "$cgroup_io2" "$zfs_io1" "$zfs_io2" "$zfs_io_rates" "$zfs_vdev_map")
+    disk_metrics=$(compute_disk_metrics_json "$df_stats" "$diskstats1" "$diskstats2" "$cgroup_io1" "$cgroup_io2" "$zfs_io1" "$zfs_io2" "${RATE_ZFS_POOL_IO:-}" "$zfs_vdev_map")
 
     RATE_INTERFACE_METRICS="$interface_metrics"
     RATE_DISK_METRICS="$disk_metrics"
@@ -979,6 +995,201 @@ get_memory_available() {
     awk '/^MemAvailable:/ { printf "%.0f", $2 * 1024; exit }' /proc/meminfo
 }
 
+read_zfs_arc_snapshot() {
+    [[ -r /proc/spl/kstat/zfs/arcstats ]] || return 1
+
+    awk '
+        /^size[[:space:]]/ { size = $3 + 0 }
+        /^c_min[[:space:]]/ { c_min = $3 + 0 }
+        /^c_max[[:space:]]/ { c_max = $3 + 0 }
+        /^c[[:space:]]/ { c = $3 + 0 }
+        /^data_size[[:space:]]/ { data = $3 + 0 }
+        /^metadata_size[[:space:]]/ { metadata = $3 + 0 }
+        /^l2_size[[:space:]]/ { l2 = $3 + 0 }
+        /^hits[[:space:]]/ { hits = $3 + 0 }
+        /^misses[[:space:]]/ { misses = $3 + 0 }
+        END {
+            printf "%d %d %d %d %d %d %d %d %d\n", \
+                size + 0, c + 0, c_min + 0, c_max + 0, data + 0, metadata + 0, l2 + 0, hits + 0, misses + 0
+        }
+    ' /proc/spl/kstat/zfs/arcstats
+}
+
+compute_zfs_arc_rates() {
+    local before="$1" after="$2"
+    awk -v before="$before" -v after="$after" '
+        function delta(curr, prev) {
+            d = curr - prev
+            return (d > 0) ? d : 0
+        }
+        BEGIN {
+            split(before, b, " ")
+            split(after, a, " ")
+            hits_delta = delta(a[8], b[8])
+            misses_delta = delta(a[9], b[9])
+            total = hits_delta + misses_delta
+            hit_ratio = (total > 0) ? hits_delta / total * 100 : 0
+            printf "%d %d %d %d %d %d %d %d %d %.2f %d\n", \
+                a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], hit_ratio, misses_delta
+        }
+    '
+}
+
+compute_zfs_arc_metrics_json() {
+    local snap="$1" hit_ratio="$2" misses_per_sec="$3"
+    local size c c_min c_max data metadata l2
+
+    read -r size c c_min c_max data metadata l2 _hits _misses <<<"$snap"
+
+    jq -n \
+        --argjson arcSizeBytes "$size" \
+        --argjson arcTargetBytes "$c" \
+        --argjson arcMaxBytes "$c_max" \
+        --argjson arcMinBytes "$c_min" \
+        --argjson arcDataBytes "$data" \
+        --argjson arcMetadataBytes "$metadata" \
+        --argjson l2arcSizeBytes "$l2" \
+        --argjson arcHitRatio "$hit_ratio" \
+        --argjson arcMissesPerSecond "$misses_per_sec" \
+        '{
+            arcSizeBytes: $arcSizeBytes,
+            arcTargetBytes: $arcTargetBytes,
+            arcMaxBytes: $arcMaxBytes,
+            arcMinBytes: $arcMinBytes,
+            arcDataBytes: $arcDataBytes,
+            arcMetadataBytes: $arcMetadataBytes,
+            l2arcSizeBytes: $l2arcSizeBytes,
+            arcHitRatio: $arcHitRatio,
+            arcMissesPerSecond: $arcMissesPerSecond
+        }'
+}
+
+read_zfs_pool_status_data() {
+    command -v zpool >/dev/null 2>&1 || return 0
+
+    zpool status -P 2>/dev/null | awk '
+        function emit() {
+            if (pool != "") {
+                printf "%s\t%s\t%.2f\t%d\n", pool, scan_state, scan_pct, cksum
+            }
+        }
+        /^  pool: / {
+            emit()
+            pool = $2
+            scan_state = "NONE"
+            scan_pct = 0
+            cksum = 0
+            next
+        }
+        /scan:/ {
+            if ($0 ~ /scrub/) scan_state = "SCRUB"
+            else if ($0 ~ /resilver/) scan_state = "RESILVER"
+            else scan_state = "NONE"
+            if (match($0, /[0-9]+(\.[0-9]+)?%/)) {
+                scan_pct = substr($0, RSTART, RLENGTH - 1) + 0
+            }
+        }
+        /\/dev\// {
+            cksum += $(NF) + 0
+        }
+        END { emit() }
+    '
+}
+
+compute_zfs_pool_metrics_json() {
+    local io_rates="$1"
+
+    command -v zpool >/dev/null 2>&1 || {
+        echo "[]"
+        return
+    }
+
+    {
+        zpool list -H -p -o name,size,alloc,free,cap,health,fragmentation 2>/dev/null
+        echo "---STATUS---"
+        read_zfs_pool_status_data
+        echo "---IO---"
+        [[ -n "$io_rates" ]] && printf '%s\n' "$io_rates"
+    } | awk '
+        function lookup_status(name,    i) {
+            for (i = 1; i <= status_count; i++) {
+                if (status_pool[i] == name) {
+                    return i
+                }
+            }
+            return 0
+        }
+        function lookup_io(name,    i) {
+            for (i = 1; i <= io_count; i++) {
+                if (io_pool[i] == name) {
+                    return i
+                }
+            }
+            return 0
+        }
+        $0 == "---STATUS---" { section = "status"; next }
+        $0 == "---IO---" { section = "io"; next }
+        section == "status" && NF >= 4 {
+            status_count++
+            status_pool[status_count] = $1
+            status_scan[status_count] = $2
+            status_pct[status_count] = $3 + 0
+            status_cksum[status_count] = $4 + 0
+            next
+        }
+        section == "io" && NF >= 5 {
+            io_count++
+            io_pool[io_count] = $1
+            io_read_bps[io_count] = $2 + 0
+            io_write_bps[io_count] = $3 + 0
+            io_read_iops[io_count] = $4 + 0
+            io_write_iops[io_count] = $5 + 0
+            next
+        }
+        section == "" && NF >= 7 {
+            pool = $1
+            total = $2 + 0
+            alloc = $3 + 0
+            free = $4 + 0
+            cap = $5 + 0
+            health = $6
+            frag = $7 + 0
+            idx = lookup_status(pool)
+            scan_state = (idx > 0) ? status_scan[idx] : "NONE"
+            scan_pct = (idx > 0) ? status_pct[idx] : 0
+            cksum = (idx > 0) ? status_cksum[idx] : 0
+            ioidx = lookup_io(pool)
+            read_bps = (ioidx > 0) ? io_read_bps[ioidx] : 0
+            write_bps = (ioidx > 0) ? io_write_bps[ioidx] : 0
+            read_iops = (ioidx > 0) ? io_read_iops[ioidx] : 0
+            write_iops = (ioidx > 0) ? io_write_iops[ioidx] : 0
+            printf "%s\t%s\t%.2f\t%d\t%d\t%d\t%d\t%.2f\t%s\t%.2f\t%d\t%d\t%d\t%d\t%d\n", \
+                pool, health, cap, alloc, free, total, frag, scan_state, scan_pct, \
+                read_bps, write_bps, read_iops, write_iops, cksum
+        }
+    ' | jq -R -s '
+        split("\n")
+        | map(select(length > 0))
+        | map(split("\t"))
+        | map({
+            poolName: .[0],
+            health: .[1],
+            capacityPercent: (.[2] | tonumber),
+            allocatedBytes: (.[3] | tonumber),
+            freeBytes: (.[4] | tonumber),
+            totalBytes: (.[5] | tonumber),
+            fragmentationPercent: (.[6] | tonumber),
+            scanState: .[7],
+            scanPercent: (.[8] | tonumber),
+            readBps: (.[9] | tonumber),
+            writeBps: (.[10] | tonumber),
+            readIops: (.[11] | tonumber),
+            writeIops: (.[12] | tonumber),
+            checksumErrors: (.[13] | tonumber)
+        })
+    '
+}
+
 read_memory_extras() {
     awk '
         /^Buffers:/ { buffers = $2 * 1024 }
@@ -1031,11 +1242,19 @@ get_memory_usage() {
 build_payload() {
     local mem_buffers mem_cached swap_used swap_total cpu_clock_mhz
     local process_count running_processes memory_available
+    local zfs_arc_metrics_json zfs_pool_metrics_json
 
     sample_rate_metrics
     read -r mem_buffers mem_cached swap_used swap_total < <(read_memory_extras)
     read -r process_count running_processes < <(read_loadavg_process_counts)
     memory_available=$(get_memory_available)
+
+    if [[ -n "${ZFS_ARC_SNAP:-}" ]]; then
+        zfs_arc_metrics_json=$(compute_zfs_arc_metrics_json "$ZFS_ARC_SNAP" "${ZFS_ARC_HIT_RATIO:-0}" "${ZFS_ARC_MISSES_PER_SEC:-0}")
+    else
+        zfs_arc_metrics_json="null"
+    fi
+    zfs_pool_metrics_json=$(compute_zfs_pool_metrics_json "${RATE_ZFS_POOL_IO:-}")
 
     cpu_clock_mhz=$(get_cpu_clock_mhz 2>/dev/null | head -n1 | tr -d '\r')
     if [[ ! "$cpu_clock_mhz" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
@@ -1072,6 +1291,8 @@ build_payload() {
         --argjson runningProcesses "${running_processes:-0}" \
         --argjson contextSwitchesPerSecond "${RATE_CONTEXT_SWITCHES:-0}" \
         --argjson interruptsPerSecond "${RATE_INTERRUPTS:-0}" \
+        --argjson zfsArcMetrics "$zfs_arc_metrics_json" \
+        --argjson zfsPoolMetrics "$zfs_pool_metrics_json" \
         --argjson interfaceMetrics "$RATE_INTERFACE_METRICS" \
         --argjson diskMetrics "$RATE_DISK_METRICS" \
         '{
@@ -1108,6 +1329,8 @@ build_payload() {
                 contextSwitchesPerSecond: $contextSwitchesPerSecond,
                 interruptsPerSecond: $interruptsPerSecond
             },
+            zfsArcMetrics: $zfsArcMetrics,
+            zfsPoolMetrics: $zfsPoolMetrics,
             interfaceMetrics: $interfaceMetrics,
             diskMetrics: $diskMetrics
         }'
