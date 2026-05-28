@@ -2,6 +2,7 @@
 
 export INGEST_TOKEN=""
 export API_URL="https://monitor.fascinated.cc/api/v1/servers/ingest"
+export AGENT_VERSION="1.0.0"
 
 get_ip() {
     local ip
@@ -356,13 +357,37 @@ read_disk_space_stats() {
         hugetlbfs mqueue configfs rpc_pipefs
         nfs nfs4 cifs smb3 9p ceph cephfs glusterfs vmhgfs vboxsf
     )
-    local df_args=(-B1 -PT)
+    local -a df_args=(-B1 -PT)
+    local -a df_inode_args=(-PT)
 
     for fstype in "${df_exclude[@]}"; do
         df_args+=(-x "$fstype")
+        df_inode_args+=(-x "$fstype")
     done
 
-    df "${df_args[@]}" 2>/dev/null | awk '
+    df "${df_args[@]}" 2>/dev/null | awk -v inode_data="$(df "${df_inode_args[@]}" 2>/dev/null)" '
+        function mount_inode_used(mount,    lines, i, n, parts) {
+            n = split(inode_data, lines, "\n")
+            for (i = 2; i <= n; i++) {
+                if (lines[i] == "") continue
+                nf = split(lines[i], parts, " ")
+                if (parts[nf] == mount) {
+                    return parts[3] + 0
+                }
+            }
+            return 0
+        }
+        function mount_inode_total(mount,    lines, i, n, parts) {
+            n = split(inode_data, lines, "\n")
+            for (i = 2; i <= n; i++) {
+                if (lines[i] == "") continue
+                nf = split(lines[i], parts, " ")
+                if (parts[nf] == mount) {
+                    return parts[2] + 0
+                }
+            }
+            return 0
+        }
         NR > 1 {
             source = $1
             fstype = $2
@@ -387,7 +412,9 @@ read_disk_space_stats() {
                 next
             }
 
-            printf "%s\t%s\t%d\t%d\t%s\n", mount, source, used, total, disk_type
+            inode_used = mount_inode_used(mount)
+            inode_total = mount_inode_total(mount)
+            printf "%s\t%s\t%d\t%d\t%s\t%d\t%d\n", mount, source, used, total, disk_type, inode_used, inode_total
         }
     '
 }
@@ -600,43 +627,59 @@ lookup_diskstats_delta() {
             weighted_io_ms_delta = weighted_io_ms - prev_weighted_io_ms
             read_ms_delta = read_ms - prev_read_ms
             write_ms_delta = write_ms - prev_write_ms
-            ios = (reads - prev_reads) + (writes - prev_writes)
+            read_iops = reads - prev_reads
+            write_iops = writes - prev_writes
 
             if (read_bps < 0) read_bps = 0
             if (write_bps < 0) write_bps = 0
             if (weighted_io_ms_delta < 0) weighted_io_ms_delta = 0
             if (read_ms_delta < 0) read_ms_delta = 0
             if (write_ms_delta < 0) write_ms_delta = 0
-            if (ios < 0) ios = 0
+            if (read_iops < 0) read_iops = 0
+            if (write_iops < 0) write_iops = 0
 
             io_usage = weighted_io_ms_delta / 10
-            io_wait = (ios > 0) ? (read_ms_delta + write_ms_delta) / ios : 0
+            io_wait = (read_iops + write_iops > 0) ? (read_ms_delta + write_ms_delta) / (read_iops + write_iops) : 0
+            read_latency = (read_iops > 0) ? read_ms_delta / read_iops : 0
+            write_latency = (write_iops > 0) ? write_ms_delta / write_iops : 0
 
-            printf "%d %d %.2f %.2f", read_bps, write_bps, io_usage, io_wait
+            printf "%d %d %.2f %.2f %d %d %.2f %.2f", \
+                read_bps, write_bps, io_usage, io_wait, read_iops, write_iops, read_latency, write_latency
         }
     '
 }
 
-lookup_zfs_pool_vdev_io_util() {
+lookup_zfs_pool_vdev_disk_stats() {
     local pool="$1" before="$2" after="$3" vdev_map="$4"
-    local vdev p line read_bps write_bps usage wait
+    local vdev p line read_bps write_bps io_usage io_wait read_iops write_iops read_lat write_lat
     local max_usage=0 max_wait=0 found=0
+    local total_read_iops=0 total_write_iops=0 total_read_ms=0 total_write_ms=0
 
     while IFS=$'\t' read -r p vdev; do
         [[ "$p" != "$pool" || -z "$vdev" ]] && continue
         line=$(lookup_diskstats_delta "$vdev" "$before" "$after") || continue
-        read -r read_bps write_bps usage wait <<<"$line"
+        read -r read_bps write_bps io_usage io_wait read_iops write_iops read_lat write_lat <<<"$line"
         found=1
-        if awk -v u="$usage" -v m="$max_usage" 'BEGIN { exit !(u > m) }'; then
-            max_usage=$usage
+        total_read_iops=$((total_read_iops + read_iops))
+        total_write_iops=$((total_write_iops + write_iops))
+        total_read_ms=$(awk -v a="$total_read_ms" -v b="$read_lat" -v c="$read_iops" 'BEGIN { printf "%.6f", a + b * c }')
+        total_write_ms=$(awk -v a="$total_write_ms" -v b="$write_lat" -v c="$write_iops" 'BEGIN { printf "%.6f", a + b * c }')
+        if awk -v u="$io_usage" -v m="$max_usage" 'BEGIN { exit !(u > m) }'; then
+            max_usage=$io_usage
         fi
-        if (( read_bps + write_bps > 0 )) && awk -v w="$wait" -v m="$max_wait" 'BEGIN { exit !(w > m) }'; then
-            max_wait=$wait
+        if (( read_bps + write_bps > 0 )) && awk -v w="$io_wait" -v m="$max_wait" 'BEGIN { exit !(w > m) }'; then
+            max_wait=$io_wait
         fi
     done <<<"$vdev_map"
 
     (( found )) || return 1
-    printf '%.2f %.2f\n' "$max_usage" "$max_wait"
+    read_lat=$(awk -v ms="$total_read_ms" -v ops="$total_read_iops" 'BEGIN { if (ops > 0) printf "%.2f", ms / ops; else print "0.00" }')
+    write_lat=$(awk -v ms="$total_write_ms" -v ops="$total_write_iops" 'BEGIN { if (ops > 0) printf "%.2f", ms / ops; else print "0.00" }')
+    printf '%.2f %.2f %d %d %.2f %.2f\n' "$max_usage" "$max_wait" "$total_read_iops" "$total_write_iops" "$read_lat" "$write_lat"
+}
+
+lookup_zfs_pool_vdev_io_util() {
+    lookup_zfs_pool_vdev_disk_stats "$@" | awk '{ printf "%s %s\n", $1, $2 }'
 }
 
 lookup_cgroup_io_bps() {
@@ -701,14 +744,16 @@ lookup_zfs_pool_io_bps() {
 
 compute_disk_metrics_json() {
     local df_stats="$1" diskstats1="$2" diskstats2="$3" cgroup_io1="$4" cgroup_io2="$5" zfs_io1="$6" zfs_io2="$7" zfs_io_rates="$8" zfs_vdev_map="$9"
-    local mount source used total disk_type device io_line read_bps write_bps io_usage io_wait majmin cgroup_device zfs_pool
+    local mount source used total disk_type inode_used inode_total device io_line
+    local read_bps write_bps io_usage io_wait read_iops write_iops read_lat write_lat
+    local majmin cgroup_device zfs_pool
 
     if [[ -n "$cgroup_io1" ]]; then
         majmin=$(awk 'NR == 1 { print $1; exit }' <<<"$cgroup_io1")
         cgroup_device=$(resolve_block_device_name "$majmin" 2>/dev/null || true)
     fi
 
-    while IFS=$'\t' read -r mount source used total disk_type; do
+    while IFS=$'\t' read -r mount source used total disk_type inode_used inode_total; do
         [[ -z "$mount" ]] && continue
 
         device=""
@@ -716,6 +761,10 @@ compute_disk_metrics_json() {
         write_bps=0
         io_usage="0.00"
         io_wait="0.00"
+        read_iops=0
+        write_iops=0
+        read_lat="0.00"
+        write_lat="0.00"
         zfs_pool="${source%%/*}"
 
         if [[ "$disk_type" == "zfs" ]] && zfs_mount_gets_pool_io "$source" "$mount"; then
@@ -727,24 +776,25 @@ compute_disk_metrics_json() {
                 read -r read_bps write_bps <<<"$io_line"
             fi
             if [[ -n "$zfs_vdev_map" ]] \
-                && io_line=$(lookup_zfs_pool_vdev_io_util "$zfs_pool" "$diskstats1" "$diskstats2" "$zfs_vdev_map"); then
-                read -r io_usage io_wait <<<"$io_line"
+                && io_line=$(lookup_zfs_pool_vdev_disk_stats "$zfs_pool" "$diskstats1" "$diskstats2" "$zfs_vdev_map"); then
+                read -r io_usage io_wait read_iops write_iops read_lat write_lat <<<"$io_line"
             fi
         elif [[ "$disk_type" == "block" ]]; then
             device=$(resolve_diskstats_device_name "$source" || basename "$source")
             if io_line=$(lookup_diskstats_delta "$device" "$diskstats1" "$diskstats2"); then
-                read -r read_bps write_bps io_usage io_wait <<<"$io_line"
+                read -r read_bps write_bps io_usage io_wait read_iops write_iops read_lat write_lat <<<"$io_line"
             fi
         elif [[ -n "$cgroup_io1" && -n "$cgroup_io2" ]]; then
             if io_line=$(lookup_cgroup_io_bps "$cgroup_io1" "$cgroup_io2"); then
                 read -r read_bps write_bps <<<"$io_line"
             fi
         elif [[ -n "$cgroup_device" ]] && io_line=$(lookup_diskstats_delta "$cgroup_device" "$diskstats1" "$diskstats2"); then
-            read -r read_bps write_bps io_usage io_wait <<<"$io_line"
+            read -r read_bps write_bps io_usage io_wait read_iops write_iops read_lat write_lat <<<"$io_line"
         fi
 
-        printf '%s\t%d\t%d\t%d\t%d\t%s\t%s\n' \
-            "$mount" "$used" "$total" "$read_bps" "$write_bps" "$io_usage" "$io_wait"
+        printf '%s\t%d\t%d\t%d\t%d\t%s\t%s\t%d\t%d\t%s\t%s\t%d\t%d\n' \
+            "$mount" "$used" "$total" "$read_bps" "$write_bps" "$io_usage" "$io_wait" \
+            "$read_iops" "$write_iops" "$read_lat" "$write_lat" "$inode_used" "$inode_total"
     done <<<"$df_stats" | jq -R -s '
         split("\n")
         | map(select(length > 0))
@@ -756,7 +806,13 @@ compute_disk_metrics_json() {
             ioReadBytesPerSecond: (.[3] | tonumber),
             ioWriteBytesPerSecond: (.[4] | tonumber),
             ioUsagePercent: (.[5] | tonumber),
-            ioWaitMilliseconds: (.[6] | tonumber)
+            ioWaitMilliseconds: (.[6] | tonumber),
+            readIops: (.[7] | tonumber),
+            writeIops: (.[8] | tonumber),
+            readLatencyMs: (.[9] | tonumber),
+            writeLatencyMs: (.[10] | tonumber),
+            inodeUsed: (.[11] | tonumber),
+            inodeTotal: (.[12] | tonumber)
         })
     '
 }
@@ -831,6 +887,7 @@ sample_rate_metrics() {
     local diskstats1 diskstats2 cgroup_io1 cgroup_io2 zfs_io1 zfs_io2 zfs_io_rates zfs_vdev_map df_stats
     local zfs_iostat_tmp="" zfs_iostat_pid=""
     local cpu_line1 cpu_line2 cpu_metrics interface_metrics disk_metrics
+    local stat_counters1 stat_counters2
 
     cgroup_dir=$(get_cgroup_dir)
     if [[ -n "$cgroup_dir" && -r "$cgroup_dir/cpu.stat" ]]; then
@@ -846,6 +903,7 @@ sample_rate_metrics() {
         read -r zfs_iostat_tmp zfs_iostat_pid < <(start_zfs_pool_io_rates_sample || true)
     fi
     cpu_line1=$(read_cpu_stat_line)
+    stat_counters1=$(read_proc_stat_counters)
     net_snap1=$(read_network_stats)
     sleep 1
 
@@ -864,6 +922,7 @@ sample_rate_metrics() {
         zfs_io2=$(read_zfs_pool_io_snapshot)
     fi
     cpu_line2=$(read_cpu_stat_line)
+    stat_counters2=$(read_proc_stat_counters)
     net_snap2=$(read_network_stats)
 
     read -r _cpu_usage RATE_CPU_USER RATE_CPU_SYSTEM RATE_CPU_IOWAIT RATE_CPU_STEAL \
@@ -873,6 +932,8 @@ sample_rate_metrics() {
     fi
 
     read -r RATE_LOAD1 RATE_LOAD5 RATE_LOAD15 < <(get_load_averages)
+    read -r RATE_CONTEXT_SWITCHES RATE_INTERRUPTS \
+        < <(compute_kernel_stat_rates "$stat_counters1" "$stat_counters2")
 
     interface_metrics=$(compute_interface_metrics_json "$net_snap1" "$net_snap2")
     disk_metrics=$(compute_disk_metrics_json "$df_stats" "$diskstats1" "$diskstats2" "$cgroup_io1" "$cgroup_io2" "$zfs_io1" "$zfs_io2" "$zfs_io_rates" "$zfs_vdev_map")
@@ -883,6 +944,53 @@ sample_rate_metrics() {
 
 get_load_averages() {
     awk '{ printf "%.2f %.2f %.2f", $1, $2, $3 }' /proc/loadavg
+}
+
+read_loadavg_process_counts() {
+    awk '{
+        split($4, parts, "/")
+        print parts[2] + 0, parts[1] + 0
+    }' /proc/loadavg
+}
+
+read_proc_stat_counters() {
+    awk '
+        /^ctxt / { ctxt = $2 + 0 }
+        /^intr / { intr = $2 + 0 }
+        END { print ctxt + 0, intr + 0 }
+    ' /proc/stat
+}
+
+compute_kernel_stat_rates() {
+    local before="$1" after="$2"
+    awk -v before="$before" -v after="$after" '
+        function delta(curr, prev) {
+            d = curr - prev
+            return (d > 0) ? d : 0
+        }
+        BEGIN {
+            split(before, b, " ")
+            split(after, a, " ")
+            printf "%d %d\n", delta(a[1], b[1]), delta(a[2], b[2])
+        }
+    '
+}
+
+get_memory_available() {
+    local cgroup_dir
+
+    cgroup_dir=$(get_cgroup_dir)
+    if [[ -n "$cgroup_dir" && -r "$cgroup_dir/memory.max" && -r "$cgroup_dir/memory.current" ]]; then
+        local memory_max memory_current
+        read -r memory_max < "$cgroup_dir/memory.max"
+        read -r memory_current < "$cgroup_dir/memory.current"
+        if [[ "$memory_max" != "max" && "$memory_max" =~ ^[0-9]+$ && "$memory_current" =~ ^[0-9]+$ ]]; then
+            echo $((memory_max - memory_current))
+            return
+        fi
+    fi
+
+    awk '/^MemAvailable:/ { printf "%.0f", $2 * 1024; exit }' /proc/meminfo
 }
 
 read_memory_extras() {
@@ -935,12 +1043,21 @@ get_memory_usage() {
 }
 
 build_payload() {
-    local mem_buffers mem_cached swap_used swap_total
+    local mem_buffers mem_cached swap_used swap_total cpu_clock_mhz
+    local process_count running_processes memory_available
 
     sample_rate_metrics
     read -r mem_buffers mem_cached swap_used swap_total < <(read_memory_extras)
+    read -r process_count running_processes < <(read_loadavg_process_counts)
+    memory_available=$(get_memory_available)
+
+    cpu_clock_mhz=$(get_cpu_clock_mhz 2>/dev/null | head -n1 | tr -d '\r')
+    if [[ ! "$cpu_clock_mhz" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        cpu_clock_mhz="0"
+    fi
 
     jq -n \
+        --arg agentVersion "$AGENT_VERSION" \
         --arg ip "$(get_ip)" \
         --argjson coreCount "$(get_core_count)" \
         --argjson threadCount "$(get_thread_count)" \
@@ -949,10 +1066,11 @@ build_payload() {
         --argjson uptimeSeconds "$(get_uptime_seconds)" \
         --arg cpuModel "$(get_cpu_model)" \
         --argjson socketCount "$(get_socket_count)" \
-        --argjson cpuClockMhz "$(get_cpu_clock_mhz 2>/dev/null || echo 0)" \
+        --argjson cpuClockMhz "$cpu_clock_mhz" \
         --argjson cpuUsage "${RATE_CPU_USAGE:-0}" \
         --argjson memoryUsage "$(get_memory_usage)" \
         --argjson memoryTotal "$(get_memory_total)" \
+        --argjson memoryAvailable "${memory_available:-0}" \
         --argjson load1 "${RATE_LOAD1:-0}" \
         --argjson load5 "${RATE_LOAD5:-0}" \
         --argjson load15 "${RATE_LOAD15:-0}" \
@@ -964,9 +1082,14 @@ build_payload() {
         --argjson memoryCached "$mem_cached" \
         --argjson swapUsed "$swap_used" \
         --argjson swapTotal "$swap_total" \
+        --argjson processCount "${process_count:-0}" \
+        --argjson runningProcesses "${running_processes:-0}" \
+        --argjson contextSwitchesPerSecond "${RATE_CONTEXT_SWITCHES:-0}" \
+        --argjson interruptsPerSecond "${RATE_INTERRUPTS:-0}" \
         --argjson interfaceMetrics "$RATE_INTERFACE_METRICS" \
         --argjson diskMetrics "$RATE_DISK_METRICS" \
         '{
+            agentVersion: $agentVersion,
             serverDetails: {
                 ip: $ip,
                 coreCount: $coreCount,
@@ -982,6 +1105,7 @@ build_payload() {
                 cpuUsage: $cpuUsage,
                 memoryUsage: $memoryUsage,
                 memoryTotal: $memoryTotal,
+                memoryAvailable: $memoryAvailable,
                 load1: $load1,
                 load5: $load5,
                 load15: $load15,
@@ -992,7 +1116,11 @@ build_payload() {
                 memoryBuffers: $memoryBuffers,
                 memoryCached: $memoryCached,
                 swapUsed: $swapUsed,
-                swapTotal: $swapTotal
+                swapTotal: $swapTotal,
+                processCount: $processCount,
+                runningProcesses: $runningProcesses,
+                contextSwitchesPerSecond: $contextSwitchesPerSecond,
+                interruptsPerSecond: $interruptsPerSecond
             },
             interfaceMetrics: $interfaceMetrics,
             diskMetrics: $diskMetrics
