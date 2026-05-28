@@ -182,8 +182,8 @@ read_network_stats() {
             name = normalize_iface(name)
             if (name == "" || name == "lo") return 0
             if (name ~ /^veth/ || name ~ /^fwbr/ || name ~ /^docker/ || name ~ /^br-/ || name ~ /^virbr/) return 0
-            if (name ~ /^(tap|tun|wg|dummy|nlmon|ifb|vnet|lxc)/) return 0
-            return name ~ /^(eth|ens|enp|eno|enx|em|wlan|wlp|bond|nic|vmbr)[0-9]+$/
+            if (name ~ /^(tap|tun|wg|dummy|nlmon|ifb|vnet|lxc|tailscale|pterodactyl)/) return 0
+            return name ~ /^(eth[0-9]+|ens[0-9]+|enp[0-9]+s[0-9]+(d[0-9]+)?(f[0-9]+)?|eno[0-9]+|enx[0-9a-f]+|em[0-9]+|wlan[0-9]+|wlp[0-9]+s[0-9]+|bond[0-9]+|nic[0-9]+|vmbr[0-9]+)$/
         }
         NR > 2 {
             iface = $1
@@ -647,8 +647,8 @@ compute_interface_metrics_json() {
             name = normalize_iface(name)
             if (name == "" || name == "lo") return 0
             if (name ~ /^veth/ || name ~ /^fwbr/ || name ~ /^docker/ || name ~ /^br-/ || name ~ /^virbr/) return 0
-            if (name ~ /^(tap|tun|wg|dummy|nlmon|ifb|vnet|lxc)/) return 0
-            return name ~ /^(eth|ens|enp|eno|enx|em|wlan|wlp|bond|nic|vmbr)[0-9]+$/
+            if (name ~ /^(tap|tun|wg|dummy|nlmon|ifb|vnet|lxc|tailscale|pterodactyl)/) return 0
+            return name ~ /^(eth[0-9]+|ens[0-9]+|enp[0-9]+s[0-9]+(d[0-9]+)?(f[0-9]+)?|eno[0-9]+|enx[0-9a-f]+|em[0-9]+|wlan[0-9]+|wlp[0-9]+s[0-9]+|bond[0-9]+|nic[0-9]+|vmbr[0-9]+)$/
         }
         FNR == NR {
             if ($1 == "" || !is_common_interface($1)) next
