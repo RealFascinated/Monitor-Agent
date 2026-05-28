@@ -1356,6 +1356,11 @@ push_metrics() {
 
     payload=$(build_payload)
 
+    if [[ "${1:-}" == "--print-json" ]]; then
+        echo "$payload"
+        return 0
+    fi
+
     body=$(curl -sS -w "\n%{http_code}" \
         -X POST "$API_URL" \
         -H "Content-Type: application/json" \
@@ -1376,4 +1381,11 @@ push_metrics() {
     return 1
 }
 
-push_metrics
+case "${1:-}" in
+    --print-json)
+        push_metrics --print-json
+        ;;
+    *)
+        push_metrics
+        ;;
+esac
