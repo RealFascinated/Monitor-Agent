@@ -175,7 +175,7 @@ read_network_stats() {
             if (name == "" || name == "lo") return 0
             if (name ~ /^veth/ || name ~ /^fwbr/ || name ~ /^docker/ || name ~ /^br-/ || name ~ /^virbr/) return 0
             if (name ~ /^(tap|tun|wg|dummy|nlmon|ifb|vnet|lxc)/) return 0
-            return name ~ /^(eth|ens|enp|eno|enx|em|wlan|wlp|bond)[0-9]+$/
+            return name ~ /^(eth|ens|enp|eno|enx|em|wlan|wlp|bond|nic)[0-9]+$/
         }
         NR > 2 {
             iface = $1
