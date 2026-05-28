@@ -8,6 +8,7 @@ AUTO_UPDATE_FILE="/etc/default/monitor-agent"
 AUTO_UPDATE_STATE_DIR="/var/lib/monitor-agent"
 AUTO_UPDATE_INTERVAL_SECONDS=3600
 CRON_FILE="/etc/cron.d/monitor-agent"
+UNRAID_CRON_FILE="/boot/config/plugins/dynamix/monitor-agent.cron"
 LOG_FILE="/var/log/monitor-agent.log"
 DEPENDENCIES=(curl jq ip)
 AUTO_UPDATE=true
@@ -50,6 +51,24 @@ die() {
 require_root() {
     if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
         die "This script must be run as root (use sudo)."
+    fi
+}
+
+is_unraid() {
+    [[ -f /etc/unraid-version || -f /boot/config/go ]]
+}
+
+reload_cron() {
+    if is_unraid && command -v update_cron >/dev/null 2>&1; then
+        update_cron
+        log "Ran update_cron"
+        return
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl reload crond 2>/dev/null || systemctl reload cron 2>/dev/null || true
+    elif command -v service >/dev/null 2>&1; then
+        service crond reload 2>/dev/null || service cron reload 2>/dev/null || true
     fi
 }
 
@@ -191,7 +210,11 @@ install_dependencies() {
             zypper --non-interactive install "${packages[@]}"
             ;;
         unknown)
-            die "Could not detect a supported package manager. Install manually: ${packages[*]}"
+            log "WARNING: Unknown package manager (${pm}). Install manually if needed: ${packages[*]}"
+            for dep in "${missing[@]}"; do
+                command -v "$dep" >/dev/null 2>&1 || die "Missing dependency: $dep"
+            done
+            return
             ;;
     esac
 
@@ -359,16 +382,32 @@ EOF
 }
 
 install_cron() {
+    local runner unraid_cron_line
+
+    runner="$RUN_PATH"
+    [[ -x "$runner" ]] || runner="$INSTALL_PATH"
+    unraid_cron_line="* * * * * ${runner} >> ${LOG_FILE} 2>&1"
+
     log "Installing cron job (every minute)"
+
+    if is_unraid; then
+        printf '%s\n' "$unraid_cron_line" > "$UNRAID_CRON_FILE"
+        chmod 644 "$UNRAID_CRON_FILE"
+        log "Installed persistent Unraid cron: ${UNRAID_CRON_FILE}"
+        reload_cron
+        return
+    fi
 
     cat > "$CRON_FILE" <<EOF
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-* * * * * root ${RUN_PATH} >> ${LOG_FILE} 2>&1
+* * * * * root ${runner} >> ${LOG_FILE} 2>&1
+
 EOF
 
     chmod 644 "$CRON_FILE"
+    reload_cron
 }
 
 remove_file() {
@@ -387,6 +426,7 @@ uninstall() {
     remove_file "$INSTALL_PATH" "Agent"
     remove_file "$RUN_PATH" "Cron runner"
     remove_file "$CRON_FILE" "Cron job"
+    remove_file "$UNRAID_CRON_FILE" "Unraid cron job"
     remove_file "$AUTO_UPDATE_FILE" "Auto-update config"
     remove_file "${AUTO_UPDATE_STATE_DIR}/last-update" "Auto-update timestamp"
     remove_file "$LOG_FILE" "Log file"
@@ -395,6 +435,7 @@ uninstall() {
         rmdir "$AUTO_UPDATE_STATE_DIR" 2>/dev/null || true
     fi
 
+    reload_cron
     log "Uninstall complete."
 }
 
@@ -430,12 +471,18 @@ main() {
     log "Agent: ${INSTALL_PATH}"
     log "Runner: ${RUN_PATH}"
     log "Auto-update: $([[ "$AUTO_UPDATE" == true ]] && echo enabled || echo disabled) (${AUTO_UPDATE_FILE})"
-    log "Cron:  ${CRON_FILE}"
+    if is_unraid; then
+        log "Cron:  ${UNRAID_CRON_FILE}"
+    else
+        log "Cron:  ${CRON_FILE}"
+    fi
     log "Logs:  ${LOG_FILE}"
 }
 
 parse_args "$@"
 require_root
+
+log "Monitor Agent installer starting (command: ${COMMAND})"
 
 case "$COMMAND" in
     install)

@@ -2,7 +2,7 @@
 
 export INGEST_TOKEN=""
 export API_URL="https://monitor.fascinated.cc/api/v1/servers/ingest"
-export AGENT_VERSION="1.1.0"
+export AGENT_VERSION="1.1.1"
 
 get_ip() {
     local ip
@@ -1111,6 +1111,7 @@ compute_zfs_pool_metrics_json() {
         echo "---IO---"
         [[ -n "$io_rates" ]] && printf '%s\n' "$io_rates"
     } | awk '
+        BEGIN { OFS = "\t" }
         function lookup_status(name,    i) {
             for (i = 1; i <= status_count; i++) {
                 if (status_pool[i] == name) {
@@ -1146,14 +1147,14 @@ compute_zfs_pool_metrics_json() {
             io_write_iops[io_count] = $5 + 0
             next
         }
-        section == "" && NF >= 7 {
+        section == "" && NF >= 6 {
             pool = $1
             total = $2 + 0
             alloc = $3 + 0
             free = $4 + 0
             cap = $5 + 0
             health = $6
-            frag = $7 + 0
+            frag = (NF >= 7) ? $7 + 0 : 0
             idx = lookup_status(pool)
             scan_state = (idx > 0) ? status_scan[idx] : "NONE"
             scan_pct = (idx > 0) ? status_pct[idx] : 0
@@ -1163,8 +1164,7 @@ compute_zfs_pool_metrics_json() {
             write_bps = (ioidx > 0) ? io_write_bps[ioidx] : 0
             read_iops = (ioidx > 0) ? io_read_iops[ioidx] : 0
             write_iops = (ioidx > 0) ? io_write_iops[ioidx] : 0
-            printf "%s\t%s\t%.2f\t%d\t%d\t%d\t%.2f\t%s\t%.2f\t%d\t%d\t%d\t%d\t%d\n", \
-                pool, health, cap, alloc, free, total, frag, scan_state, scan_pct, \
+            print pool, health, cap, alloc, free, total, frag, scan_state, scan_pct, \
                 read_bps, write_bps, read_iops, write_iops, cksum
         }
     ' | jq -R -s '
