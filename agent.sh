@@ -392,7 +392,7 @@ compute_interface_metrics_json() {
             if (name == "" || name == "lo") return 0
             if (name ~ /^veth/ || name ~ /^fwbr/ || name ~ /^docker/ || name ~ /^br-/ || name ~ /^virbr/) return 0
             if (name ~ /^(tap|tun|wg|dummy|nlmon|ifb|vnet|lxc)/) return 0
-            return name ~ /^(eth|ens|enp|eno|enx|em|wlan|wlp|bond)[0-9]+$/
+            return name ~ /^(eth|ens|enp|eno|enx|em|wlan|wlp|bond|nic|vmbr)[0-9]+$/
         }
         FNR == NR {
             if ($1 == "" || !is_common_interface($1)) next
