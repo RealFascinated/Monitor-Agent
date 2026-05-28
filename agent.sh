@@ -232,12 +232,12 @@ read_disk_space_stats() {
 
     zfs_stats=$(read_zfs_pool_space_stats)
     df_stats=$(df -B1 -P \
-        -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs -x zfs 2>/dev/null | awk '
+        -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs -x zfs -x fuse -x fusectl 2>/dev/null | awk '
         NR > 1 {
             total = $3 + $4
             if (total <= 0) next
             if ($1 ~ /^[0-9]+(\.[0-9]+){3}:/ ) next
-            if ($1 ~ /^\/dev\/zd/) next
+            if ($1 ~ /^\/dev\/(zd|fuse)/ ) next
             printf "%s\t%s\t%d\t%d\n", $1, $6, $3, total
         }
     ')
