@@ -13,6 +13,7 @@ LOG_FILE="/var/log/monitor-agent.log"
 DEPENDENCIES=(curl jq ip)
 AUTO_UPDATE=true
 AUTO_UPDATE_EXPLICIT=false
+INGEST_TOKEN="${INGEST_TOKEN:-}"
 
 usage() {
     cat <<EOF
@@ -124,7 +125,9 @@ prompt_token() {
     fi
 
     if [[ -t 0 ]]; then
-        read -r -s -p "Enter INGEST_TOKEN: " INGEST_TOKEN
+        if ! read -r -s -p "Enter INGEST_TOKEN: " INGEST_TOKEN; then
+            die "Could not read INGEST_TOKEN from terminal."
+        fi
         echo
         [[ -n "${INGEST_TOKEN:-}" ]] || die "INGEST_TOKEN is required."
     else
@@ -254,7 +257,9 @@ install_agent() {
     local src="$1"
     local had_existing=false
 
-    [[ -f "$INSTALL_PATH" ]] && had_existing=true
+    if [[ -f "$INSTALL_PATH" ]]; then
+        had_existing=true
+    fi
 
     log "Installing agent to ${INSTALL_PATH}"
     configure_token "$src" "$INSTALL_PATH"
@@ -384,8 +389,11 @@ EOF
 install_cron() {
     local runner unraid_cron_line
 
-    runner="$RUN_PATH"
-    [[ -x "$runner" ]] || runner="$INSTALL_PATH"
+    if [[ -x "$RUN_PATH" ]]; then
+        runner="$RUN_PATH"
+    else
+        runner="$INSTALL_PATH"
+    fi
     unraid_cron_line="* * * * * ${runner} >> ${LOG_FILE} 2>&1"
 
     log "Installing cron job (every minute)"
@@ -442,8 +450,13 @@ uninstall() {
 load_auto_update_preference() {
     local value
 
-    [[ "$AUTO_UPDATE_EXPLICIT" == true ]] && return
-    [[ -r "$AUTO_UPDATE_FILE" ]] || return
+    if [[ "$AUTO_UPDATE_EXPLICIT" == true ]]; then
+        return 0
+    fi
+
+    if [[ ! -r "$AUTO_UPDATE_FILE" ]]; then
+        return 0
+    fi
 
     value=$(sed -n 's/^AUTO_UPDATE=\(.*\)$/\1/p' "$AUTO_UPDATE_FILE" | tail -n1)
     case "$value" in
