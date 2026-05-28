@@ -1163,7 +1163,7 @@ compute_zfs_pool_metrics_json() {
             write_bps = (ioidx > 0) ? io_write_bps[ioidx] : 0
             read_iops = (ioidx > 0) ? io_read_iops[ioidx] : 0
             write_iops = (ioidx > 0) ? io_write_iops[ioidx] : 0
-            printf "%s\t%s\t%.2f\t%d\t%d\t%d\t%d\t%.2f\t%s\t%.2f\t%d\t%d\t%d\t%d\t%d\n", \
+            printf "%s\t%s\t%.2f\t%d\t%d\t%d\t%.2f\t%s\t%.2f\t%d\t%d\t%d\t%d\t%d\n", \
                 pool, health, cap, alloc, free, total, frag, scan_state, scan_pct, \
                 read_bps, write_bps, read_iops, write_iops, cksum
         }

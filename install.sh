@@ -3,9 +3,15 @@ set -euo pipefail
 
 REPO_RAW_URL="https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/master/agent.sh"
 INSTALL_PATH="/usr/local/sbin/monitor-agent"
+RUN_PATH="/usr/local/sbin/monitor-agent-run"
+AUTO_UPDATE_FILE="/etc/default/monitor-agent"
+AUTO_UPDATE_STATE_DIR="/var/lib/monitor-agent"
+AUTO_UPDATE_INTERVAL_SECONDS=3600
 CRON_FILE="/etc/cron.d/monitor-agent"
 LOG_FILE="/var/log/monitor-agent.log"
 DEPENDENCIES=(curl jq ip)
+AUTO_UPDATE=true
+AUTO_UPDATE_EXPLICIT=false
 
 usage() {
     cat <<EOF
@@ -18,11 +24,16 @@ Commands:
   uninstall       Remove the agent, cron job, and log file
 
 Options:
-  --token TOKEN   Ingest API token (or set INGEST_TOKEN env var)
+  --token TOKEN       Ingest API token (or set INGEST_TOKEN env var)
+  --no-auto-update    Disable automatic agent updates from GitHub (enabled by default)
+  --auto-update       Enable automatic agent updates from GitHub (default)
+
+Auto-update checks GitHub at most once per hour by default.
 
 Examples:
   sudo $0 --token "your-token-here"
   sudo INGEST_TOKEN="your-token-here" $0
+  sudo $0 --no-auto-update --token "your-token-here"
   sudo $0 uninstall
 EOF
 }
@@ -59,6 +70,16 @@ parse_args() {
                 [[ $# -ge 2 ]] || die "--token requires a value"
                 INGEST_TOKEN="$2"
                 shift 2
+                ;;
+            --no-auto-update)
+                AUTO_UPDATE=false
+                AUTO_UPDATE_EXPLICIT=true
+                shift
+                ;;
+            --auto-update)
+                AUTO_UPDATE=true
+                AUTO_UPDATE_EXPLICIT=true
+                shift
                 ;;
             -h|--help)
                 usage
@@ -220,6 +241,123 @@ install_agent() {
     fi
 }
 
+write_auto_update_config() {
+    log "Auto-update: $([[ "$AUTO_UPDATE" == true ]] && echo enabled || echo disabled)"
+
+    cat > "$AUTO_UPDATE_FILE" <<EOF
+# Monitor Agent settings (managed by install.sh)
+AUTO_UPDATE=$([[ "$AUTO_UPDATE" == true ]] && echo 1 || echo 0)
+AUTO_UPDATE_INTERVAL=${AUTO_UPDATE_INTERVAL_SECONDS}
+EOF
+
+    mkdir -p "$AUTO_UPDATE_STATE_DIR"
+    chmod 755 "$AUTO_UPDATE_STATE_DIR"
+    chmod 644 "$AUTO_UPDATE_FILE"
+}
+
+install_run_script() {
+    log "Installing cron runner to ${RUN_PATH}"
+
+    cat > "$RUN_PATH" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+INSTALL_PATH="/usr/local/sbin/monitor-agent"
+AUTO_UPDATE_FILE="/etc/default/monitor-agent"
+AUTO_UPDATE_STATE_DIR="/var/lib/monitor-agent"
+LAST_UPDATE_FILE="/var/lib/monitor-agent/last-update"
+REPO_RAW_URL="https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/master/agent.sh"
+DEFAULT_AUTO_UPDATE_INTERVAL=3600
+
+read_config_value() {
+    local key="$1"
+    local default="$2"
+    local value
+
+    [[ -r "$AUTO_UPDATE_FILE" ]] || {
+        echo "$default"
+        return
+    }
+
+    value=$(sed -n "s/^${key}=\\(.*\\)\$/\\1/p" "$AUTO_UPDATE_FILE" | tail -n1)
+    if [[ -n "$value" ]]; then
+        echo "$value"
+    else
+        echo "$default"
+    fi
+}
+
+auto_update_enabled() {
+    local value
+
+    value=$(read_config_value "AUTO_UPDATE" "1")
+    [[ "$value" == "1" ]]
+}
+
+should_check_for_update() {
+    local interval last now
+
+    interval=$(read_config_value "AUTO_UPDATE_INTERVAL" "$DEFAULT_AUTO_UPDATE_INTERVAL")
+    [[ "$interval" =~ ^[0-9]+$ ]] || interval=$DEFAULT_AUTO_UPDATE_INTERVAL
+    (( interval > 0 )) || return 1
+
+    [[ -r "$LAST_UPDATE_FILE" ]] || return 0
+
+    last=$(cat "$LAST_UPDATE_FILE" 2>/dev/null || echo 0)
+    [[ "$last" =~ ^[0-9]+$ ]] || return 0
+
+    now=$(date +%s)
+    (( now - last >= interval ))
+}
+
+read_installed_token() {
+    sed -n 's/^export INGEST_TOKEN="\(.*\)"$/\1/p' "$INSTALL_PATH" | head -n1
+}
+
+update_agent() {
+    local token dest tmp escaped_token
+
+    should_check_for_update || return 0
+
+    [[ -r "$INSTALL_PATH" ]] || return 0
+    token=$(read_installed_token)
+    [[ -n "$token" ]] || return 0
+
+    mkdir -p "$AUTO_UPDATE_STATE_DIR"
+
+    dest=$(mktemp)
+    if ! curl -fsSL \
+        -H "Cache-Control: no-cache" \
+        "${REPO_RAW_URL}?t=$(date +%s)" \
+        -o "$dest"; then
+        rm -f "$dest"
+        return 0
+    fi
+
+    if [[ ! -s "$dest" ]] || ! head -n1 "$dest" | grep -q '^#!/'; then
+        rm -f "$dest"
+        return 0
+    fi
+
+    escaped_token=$(printf '%s' "$token" | sed 's/[\\&|]/\\&/g')
+    tmp=$(mktemp)
+    sed "s|^export INGEST_TOKEN=\".*\"|export INGEST_TOKEN=\"${escaped_token}\"|" "$dest" > "$tmp"
+    chmod 755 "$tmp"
+    mv -f "$tmp" "$INSTALL_PATH"
+    rm -f "$dest"
+    date +%s > "$LAST_UPDATE_FILE"
+}
+
+if auto_update_enabled; then
+    update_agent
+fi
+
+exec "$INSTALL_PATH"
+EOF
+
+    chmod 755 "$RUN_PATH"
+}
+
 install_cron() {
     log "Installing cron job (every minute)"
 
@@ -227,7 +365,7 @@ install_cron() {
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-* * * * * root ${INSTALL_PATH} >> ${LOG_FILE} 2>&1
+* * * * * root ${RUN_PATH} >> ${LOG_FILE} 2>&1
 EOF
 
     chmod 644 "$CRON_FILE"
@@ -247,15 +385,36 @@ remove_file() {
 
 uninstall() {
     remove_file "$INSTALL_PATH" "Agent"
+    remove_file "$RUN_PATH" "Cron runner"
     remove_file "$CRON_FILE" "Cron job"
+    remove_file "$AUTO_UPDATE_FILE" "Auto-update config"
+    remove_file "${AUTO_UPDATE_STATE_DIR}/last-update" "Auto-update timestamp"
     remove_file "$LOG_FILE" "Log file"
 
+    if [[ -d "$AUTO_UPDATE_STATE_DIR" ]]; then
+        rmdir "$AUTO_UPDATE_STATE_DIR" 2>/dev/null || true
+    fi
+
     log "Uninstall complete."
+}
+
+load_auto_update_preference() {
+    local value
+
+    [[ "$AUTO_UPDATE_EXPLICIT" == true ]] && return
+    [[ -r "$AUTO_UPDATE_FILE" ]] || return
+
+    value=$(sed -n 's/^AUTO_UPDATE=\(.*\)$/\1/p' "$AUTO_UPDATE_FILE" | tail -n1)
+    case "$value" in
+        0) AUTO_UPDATE=false ;;
+        1) AUTO_UPDATE=true ;;
+    esac
 }
 
 main() {
     local tmp
 
+    load_auto_update_preference
     prompt_token
     install_dependencies
 
@@ -263,10 +422,14 @@ main() {
     download_agent "$tmp"
     install_agent "$tmp"
     rm -f "$tmp"
+    write_auto_update_config
+    install_run_script
     install_cron
 
     log "Installation complete."
     log "Agent: ${INSTALL_PATH}"
+    log "Runner: ${RUN_PATH}"
+    log "Auto-update: $([[ "$AUTO_UPDATE" == true ]] && echo enabled || echo disabled) (${AUTO_UPDATE_FILE})"
     log "Cron:  ${CRON_FILE}"
     log "Logs:  ${LOG_FILE}"
 }
