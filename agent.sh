@@ -169,6 +169,7 @@ read_network_stats() {
         iface = $1
         sub(/:$/, "", iface)
         if (iface == "" || iface == "lo") next
+        if (iface !~ /^(eth|ens|enp|eno|enx|em|wlan|wlp|bond)[0-9]+$/) next
         print iface, $2, $3, $4, $10, $11, $12
     }' /proc/net/dev
 }
@@ -547,3 +548,4 @@ push_metrics() {
 }
 
 push_metrics
+
