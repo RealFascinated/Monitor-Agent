@@ -205,16 +205,62 @@ compute_cpu_usage_from_cgroup_samples() {
         'BEGIN { printf "%.2f", delta / capacity * 100 }'
 }
 
+read_zfs_pool_space_stats() {
+    if command -v zpool >/dev/null 2>&1; then
+        zpool list -Hp -o name,size,allocated 2>/dev/null | awk '$2 > 0 {
+            printf "%s\t%s\t%d\t%d\n", $1, $1, $3, $2
+        }'
+        return
+    fi
+
+    df -B1 -P -t zfs 2>/dev/null | awk '
+        NR > 1 {
+            total = $3 + $4
+            if (total <= 0) next
+            split($1, parts, "/")
+            pool = parts[1]
+            if (!(pool in seen)) {
+                seen[pool] = 1
+                printf "%s\t%s\t%d\t%d\n", pool, $6, $3, total
+            }
+        }
+    '
+}
+
 read_disk_space_stats() {
-    df -B1 -P / | awk '
-        NR > 1 && $6 == "/" {
+    local zfs_stats df_stats
+
+    zfs_stats=$(read_zfs_pool_space_stats)
+    df_stats=$(df -B1 -P \
+        -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs -x zfs 2>/dev/null | awk '
+        NR > 1 {
             total = $3 + $4
             if (total <= 0) next
             if ($1 ~ /^[0-9]+(\.[0-9]+){3}:/ ) next
             if ($1 ~ /^\/dev\/zd/) next
             printf "%s\t%s\t%d\t%d\n", $1, $6, $3, total
         }
-    '
+    ')
+
+    printf '%s\n%s\n' "$zfs_stats" "$df_stats" | awk 'NF'
+}
+
+read_zfs_pool_io_snapshot() {
+    local io pool
+
+    [[ -d /proc/spl/kstat/zpool ]] || return 0
+
+    for io in /proc/spl/kstat/zpool/*/io; do
+        [[ -r "$io" ]] || continue
+        pool=$(basename "$(dirname "$io")")
+        awk -v pool="$pool" '
+            $1 == "nread" { nread = $3 }
+            $1 == "nwritten" { nwritten = $3 }
+            END {
+                printf "%s\t%d\t%d\n", pool, nread + 0, nwritten + 0
+            }
+        ' "$io"
+    done
 }
 
 read_diskstats() {
@@ -334,9 +380,35 @@ lookup_cgroup_read_bps() {
     '
 }
 
+lookup_zfs_pool_read_bps() {
+    local pool="$1" before="$2" after="$3"
+    awk -v pool="$pool" -v before="$before" -v after="$after" '
+        function find_bytes(data, name,    lines, i, n, parts) {
+            n = split(data, lines, "\n")
+            for (i = 1; i <= n; i++) {
+                if (lines[i] == "") continue
+                split(lines[i], parts, "\t")
+                if (parts[1] == name) {
+                    nread = parts[2]
+                    return 1
+                }
+            }
+            return 0
+        }
+        BEGIN {
+            if (!find_bytes(before, pool)) exit 1
+            prev_nread = nread
+            if (!find_bytes(after, pool)) exit 1
+            delta = nread - prev_nread
+            if (delta < 0) delta = 0
+            print delta + 0
+        }
+    '
+}
+
 compute_disk_metrics_json() {
-    local df_stats="$1" diskstats1="$2" diskstats2="$3" cgroup_io1="$4" cgroup_io2="$5"
-    local fs mount used total device io_line read_bps io_usage io_wait majmin cgroup_device
+    local df_stats="$1" diskstats1="$2" diskstats2="$3" cgroup_io1="$4" cgroup_io2="$5" zfs_io1="$6" zfs_io2="$7"
+    local fs mount used total device io_line read_bps io_usage io_wait majmin cgroup_device zfs_pool
 
     if [[ -n "$cgroup_io1" ]]; then
         majmin=$(awk 'NR == 1 { print $1; exit }' <<<"$cgroup_io1")
@@ -355,6 +427,11 @@ compute_disk_metrics_json() {
             device=$(basename "$fs")
             if io_line=$(lookup_diskstats_delta "$device" "$diskstats1" "$diskstats2"); then
                 read -r read_bps io_usage io_wait <<<"$io_line"
+            fi
+        elif [[ -n "$zfs_io1" && -n "$zfs_io2" ]]; then
+            zfs_pool="${fs%%/*}"
+            if read_bps=$(lookup_zfs_pool_read_bps "$zfs_pool" "$zfs_io1" "$zfs_io2"); then
+                :
             fi
         elif [[ -n "$cgroup_io1" && -n "$cgroup_io2" ]]; then
             read_bps=$(lookup_cgroup_read_bps "$cgroup_io1" "$cgroup_io2")
@@ -446,7 +523,7 @@ compute_interface_metrics_json() {
 
 sample_rate_metrics() {
     local cgroup_dir cpu_usage1 cpu_usage2 net_snap1 net_snap2
-    local diskstats1 diskstats2 cgroup_io1 cgroup_io2 df_stats
+    local diskstats1 diskstats2 cgroup_io1 cgroup_io2 zfs_io1 zfs_io2 df_stats
     local idle1 total1 idle2 total2 cpu_usage interface_metrics disk_metrics
 
     cgroup_dir=$(get_cgroup_dir)
@@ -457,6 +534,7 @@ sample_rate_metrics() {
     df_stats=$(read_disk_space_stats)
     diskstats1=$(read_diskstats)
     cgroup_io1=$(read_cgroup_io_stats)
+    zfs_io1=$(read_zfs_pool_io_snapshot)
     read -r idle1 total1 < <(read_cpu_stat)
     net_snap1=$(read_network_stats)
     sleep 1
@@ -468,6 +546,7 @@ sample_rate_metrics() {
 
     diskstats2=$(read_diskstats)
     cgroup_io2=$(read_cgroup_io_stats)
+    zfs_io2=$(read_zfs_pool_io_snapshot)
     read -r idle2 total2 < <(read_cpu_stat)
     net_snap2=$(read_network_stats)
 
@@ -476,7 +555,7 @@ sample_rate_metrics() {
     fi
 
     interface_metrics=$(compute_interface_metrics_json "$net_snap1" "$net_snap2")
-    disk_metrics=$(compute_disk_metrics_json "$df_stats" "$diskstats1" "$diskstats2" "$cgroup_io1" "$cgroup_io2")
+    disk_metrics=$(compute_disk_metrics_json "$df_stats" "$diskstats1" "$diskstats2" "$cgroup_io1" "$cgroup_io2" "$zfs_io1" "$zfs_io2")
 
     RATE_CPU_USAGE="$cpu_usage"
     RATE_INTERFACE_METRICS="$interface_metrics"
