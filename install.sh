@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GITHUB_REPO="RealFascinated/Monitor-API"
-DEFAULT_VERSION="2.0.0"
+GITHUB_REPO="RealFascinated/Monitor-Agent"
+DEFAULT_VERSION="2.0.1"
 DEFAULT_API_ENDPOINT="https://monitor.fascinated.cc/api/v1/servers/ingest"
 INSTALL_BIN="/usr/local/bin/monitor-agent"
 CONFIG_DIR="/etc/monitor-agent"
@@ -29,7 +29,7 @@ EOF
 }
 
 log() {
-  printf '==> %s\n' "$*"
+  printf '==> %s\n' "$*" >&2
 }
 
 die() {
@@ -235,7 +235,9 @@ if [[ -z "$VERSION" ]]; then
   VERSION="$(fetch_latest_version)"
 fi
 
-DOWNLOADED="$(download_release "$VERSION" "$ARCH" "$TMPDIR")"
+if ! DOWNLOADED="$(download_release "$VERSION" "$ARCH" "$TMPDIR")"; then
+  die "failed to download monitor-agent binary"
+fi
 
 log "Installing binary to ${INSTALL_BIN}"
 install -d -m 0755 "$(dirname "$INSTALL_BIN")"

@@ -13,7 +13,7 @@ import (
 
 const (
 	GitHubOwner = "RealFascinated"
-	GitHubRepo  = "Monitor-API"
+	GitHubRepo  = "Monitor-Agent"
 	BinaryName  = "monitor-agent"
 	ServiceName = "monitor-agent"
 	TagPrefix   = "agent/v"
