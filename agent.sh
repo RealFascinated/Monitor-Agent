@@ -1254,7 +1254,7 @@ compute_docker_container_metrics_json() {
         | map(select(.Name != null and .Name != ""))
         | map({
             containerName: .Name,
-            cpuUsage: ((.CPUPerc // "0%") | rtrimstr("%") | tonumber * 100 | round),
+            cpuUsage: ((.CPUPerc // "0%") | rtrimstr("%") | tonumber),
             memoryUsage: ((.MemUsage // "") | split(" / ")[0] | parse_docker_bytes)
         })
     ' <<<"$stats"
