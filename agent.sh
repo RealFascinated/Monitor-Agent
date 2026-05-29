@@ -1216,7 +1216,7 @@ read_docker_container_stats() {
 }
 
 compute_docker_container_metrics_json() {
-    local stats
+    local stats core_count
 
     stats=$(read_docker_container_stats 2>/dev/null) || {
         echo "[]"
@@ -1228,7 +1228,10 @@ compute_docker_container_metrics_json() {
         return
     fi
 
-    jq -R -s '
+    core_count=$(get_online_cpu_count)
+    (( core_count > 0 )) || core_count=1
+
+    jq -R -s --argjson coreCount "$core_count" '
         def parse_docker_bytes:
             gsub(" "; "") as $value
             | ($value | capture("^(?<amount>-?[0-9.]+)(?<unit>.+)$")) as $parts
@@ -1254,7 +1257,13 @@ compute_docker_container_metrics_json() {
         | map(select(.Name != null and .Name != ""))
         | map({
             containerName: .Name,
-            cpuUsage: ((.CPUPerc // "0%") | rtrimstr("%") | tonumber),
+            cpuUsage: (
+                (.CPUPerc // "0%")
+                | rtrimstr("%")
+                | tonumber
+                | . / $coreCount
+                | . * 100 | round | . / 100
+            ),
             memoryUsage: ((.MemUsage // "") | split(" / ")[0] | parse_docker_bytes)
         })
     ' <<<"$stats"
