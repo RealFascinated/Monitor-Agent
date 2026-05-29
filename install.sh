@@ -94,13 +94,13 @@ download_release() {
     log "Verifying checksum"
     (
       cd "$tmpdir"
-      grep " ${asset}\$" checksums.txt | sha256sum -c -
+      grep " ${asset}\$" checksums.txt | sha256sum -c - >&2
     )
   else
     log "Checksum file unavailable; skipping verification"
   fi
 
-  printf '%s' "${tmpdir}/${asset}"
+  DOWNLOADED="${tmpdir}/${asset}"
 }
 
 write_config() {
@@ -235,9 +235,9 @@ if [[ -z "$VERSION" ]]; then
   VERSION="$(fetch_latest_version)"
 fi
 
-if ! DOWNLOADED="$(download_release "$VERSION" "$ARCH" "$TMPDIR")"; then
-  die "failed to download monitor-agent binary"
-fi
+DOWNLOADED=""
+download_release "$VERSION" "$ARCH" "$TMPDIR"
+[[ -f "$DOWNLOADED" ]] || die "failed to download monitor-agent binary"
 
 log "Installing binary to ${INSTALL_BIN}"
 install -d -m 0755 "$(dirname "$INSTALL_BIN")"
