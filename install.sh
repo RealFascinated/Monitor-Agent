@@ -7,8 +7,11 @@ RUN_PATH="/usr/local/sbin/monitor-agent-run"
 AUTO_UPDATE_FILE="/etc/default/monitor-agent"
 AUTO_UPDATE_STATE_DIR="/var/lib/monitor-agent"
 AUTO_UPDATE_INTERVAL_SECONDS=3600
+RUN_INTERVAL_SECONDS=15
 CRON_FILE="/etc/cron.d/monitor-agent"
 UNRAID_CRON_FILE="/boot/config/plugins/dynamix/monitor-agent.cron"
+SYSTEMD_SERVICE="/etc/systemd/system/monitor-agent.service"
+SYSTEMD_TIMER="/etc/systemd/system/monitor-agent.timer"
 LOG_FILE="/var/log/monitor-agent.log"
 DEPENDENCIES=(curl jq ip)
 AUTO_UPDATE=true
@@ -23,7 +26,7 @@ Install or remove the Monitor Agent from GitHub.
 
 Commands:
   install         Install the agent (default)
-  uninstall       Remove the agent, cron job, and log file
+  uninstall       Remove the agent, scheduler, and log file
 
 Options:
   --token TOKEN       Ingest API token (or set INGEST_TOKEN env var)
@@ -31,6 +34,7 @@ Options:
   --auto-update       Enable automatic agent updates from GitHub (default)
 
 Auto-update checks GitHub at most once per hour by default.
+The agent runs every 15 seconds (systemd timer when available, otherwise cron).
 
 Examples:
   sudo $0 --token "your-token-here"
@@ -57,6 +61,12 @@ require_root() {
 
 is_unraid() {
     [[ -f /etc/unraid-version || -f /boot/config/go ]]
+}
+
+use_systemd_timer() {
+    is_unraid && return 1
+    command -v systemctl >/dev/null 2>&1 || return 1
+    [[ "$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')" == "systemd" ]]
 }
 
 reload_cron() {
@@ -284,7 +294,7 @@ EOF
 }
 
 install_run_script() {
-    log "Installing cron runner to ${RUN_PATH}"
+    log "Installing scheduler runner to ${RUN_PATH}"
 
     cat > "$RUN_PATH" <<'EOF'
 #!/bin/bash
@@ -386,36 +396,121 @@ EOF
     chmod 755 "$RUN_PATH"
 }
 
-install_cron() {
-    local runner unraid_cron_line
-
+scheduler_runner() {
     if [[ -x "$RUN_PATH" ]]; then
-        runner="$RUN_PATH"
+        echo "$RUN_PATH"
     else
-        runner="$INSTALL_PATH"
+        echo "$INSTALL_PATH"
     fi
-    unraid_cron_line="* * * * * ${runner} >> ${LOG_FILE} 2>&1"
+}
 
-    log "Installing cron job (every minute)"
+remove_cron_jobs() {
+    remove_file "$CRON_FILE" "Cron job"
+    remove_file "$UNRAID_CRON_FILE" "Unraid cron job"
+    reload_cron
+}
+
+remove_systemd_timer() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop monitor-agent.timer 2>/dev/null || true
+        systemctl disable monitor-agent.timer 2>/dev/null || true
+    fi
+
+    remove_file "$SYSTEMD_TIMER" "Systemd timer"
+    remove_file "$SYSTEMD_SERVICE" "Systemd service"
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+    fi
+}
+
+install_systemd_timer() {
+    local runner
+
+    runner=$(scheduler_runner)
+    log "Installing systemd timer (every ${RUN_INTERVAL_SECONDS}s)"
+
+    cat > "$SYSTEMD_SERVICE" <<EOF
+[Unit]
+Description=Monitor Agent run
+
+[Service]
+Type=oneshot
+ExecStart=${runner}
+StandardOutput=append:${LOG_FILE}
+StandardError=append:${LOG_FILE}
+EOF
+
+    cat > "$SYSTEMD_TIMER" <<EOF
+[Unit]
+Description=Run Monitor Agent every ${RUN_INTERVAL_SECONDS} seconds
+
+[Timer]
+OnBootSec=${RUN_INTERVAL_SECONDS}
+OnUnitActiveSec=${RUN_INTERVAL_SECONDS}s
+AccuracySec=1s
+Unit=monitor-agent.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    chmod 644 "$SYSTEMD_SERVICE" "$SYSTEMD_TIMER"
+    systemctl daemon-reload
+    systemctl enable --now monitor-agent.timer
+}
+
+install_cron() {
+    local runner offset line
+
+    (( 60 % RUN_INTERVAL_SECONDS == 0 )) || \
+        die "RUN_INTERVAL_SECONDS (${RUN_INTERVAL_SECONDS}) must evenly divide 60 for cron scheduling."
+
+    runner=$(scheduler_runner)
+    log "Installing cron job (every ${RUN_INTERVAL_SECONDS}s)"
 
     if is_unraid; then
-        printf '%s\n' "$unraid_cron_line" > "$UNRAID_CRON_FILE"
+        : > "$UNRAID_CRON_FILE"
+        for (( offset = 0; offset < 60; offset += RUN_INTERVAL_SECONDS )); do
+            if (( offset == 0 )); then
+                line="* * * * * ${runner} >> ${LOG_FILE} 2>&1"
+            else
+                line="* * * * * sleep ${offset}; ${runner} >> ${LOG_FILE} 2>&1"
+            fi
+            printf '%s\n' "$line" >> "$UNRAID_CRON_FILE"
+        done
         chmod 644 "$UNRAID_CRON_FILE"
         log "Installed persistent Unraid cron: ${UNRAID_CRON_FILE}"
         reload_cron
         return
     fi
 
-    cat > "$CRON_FILE" <<EOF
-SHELL=/bin/bash
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-* * * * * root ${runner} >> ${LOG_FILE} 2>&1
-
-EOF
+    {
+        echo "SHELL=/bin/bash"
+        echo "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        echo
+        for (( offset = 0; offset < 60; offset += RUN_INTERVAL_SECONDS )); do
+            if (( offset == 0 )); then
+                echo "* * * * * root ${runner} >> ${LOG_FILE} 2>&1"
+            else
+                echo "* * * * * root sleep ${offset}; ${runner} >> ${LOG_FILE} 2>&1"
+            fi
+        done
+        echo
+    } > "$CRON_FILE"
 
     chmod 644 "$CRON_FILE"
     reload_cron
+}
+
+install_scheduler() {
+    if use_systemd_timer; then
+        remove_cron_jobs
+        install_systemd_timer
+    else
+        remove_systemd_timer
+        install_cron
+    fi
 }
 
 remove_file() {
@@ -432,9 +527,9 @@ remove_file() {
 
 uninstall() {
     remove_file "$INSTALL_PATH" "Agent"
-    remove_file "$RUN_PATH" "Cron runner"
-    remove_file "$CRON_FILE" "Cron job"
-    remove_file "$UNRAID_CRON_FILE" "Unraid cron job"
+    remove_file "$RUN_PATH" "Scheduler runner"
+    remove_cron_jobs
+    remove_systemd_timer
     remove_file "$AUTO_UPDATE_FILE" "Auto-update config"
     remove_file "${AUTO_UPDATE_STATE_DIR}/last-update" "Auto-update timestamp"
     remove_file "$LOG_FILE" "Log file"
@@ -443,7 +538,6 @@ uninstall() {
         rmdir "$AUTO_UPDATE_STATE_DIR" 2>/dev/null || true
     fi
 
-    reload_cron
     log "Uninstall complete."
 }
 
@@ -478,16 +572,19 @@ main() {
     rm -f "$tmp"
     write_auto_update_config
     install_run_script
-    install_cron
+    install_scheduler
 
     log "Installation complete."
     log "Agent: ${INSTALL_PATH}"
     log "Runner: ${RUN_PATH}"
+    log "Interval: every ${RUN_INTERVAL_SECONDS}s"
     log "Auto-update: $([[ "$AUTO_UPDATE" == true ]] && echo enabled || echo disabled) (${AUTO_UPDATE_FILE})"
-    if is_unraid; then
-        log "Cron:  ${UNRAID_CRON_FILE}"
+    if use_systemd_timer; then
+        log "Scheduler: systemd timer (${SYSTEMD_TIMER})"
+    elif is_unraid; then
+        log "Scheduler: cron (${UNRAID_CRON_FILE})"
     else
-        log "Cron:  ${CRON_FILE}"
+        log "Scheduler: cron (${CRON_FILE})"
     fi
     log "Logs:  ${LOG_FILE}"
 }
