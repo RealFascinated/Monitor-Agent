@@ -12,6 +12,10 @@ func stopService() error {
 }
 
 func restartService() error {
+	if isUnraid() {
+		return restartUnraidAgent()
+	}
+
 	systemctl, err := exec.LookPath("systemctl")
 	if err != nil {
 		return nil
