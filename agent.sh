@@ -1387,11 +1387,44 @@ push_metrics() {
     return 1
 }
 
-case "${1:-}" in
-    --print-json)
-        push_metrics --print-json
-        ;;
-    *)
-        push_metrics
-        ;;
-esac
+log() {
+    echo "[monitor-agent] $*" >&2
+}
+
+run_timestamp() {
+    if [[ -n "${EPOCHREALTIME:-}" ]]; then
+        printf '%s\n' "$EPOCHREALTIME"
+        return
+    fi
+
+    date +%s.%N 2>/dev/null || echo "$SECONDS"
+}
+
+format_run_duration() {
+    local start="$1" end="$2"
+
+    awk -v start="$start" -v end="$end" 'BEGIN { printf "%.2fs", end - start }'
+}
+
+main() {
+    local start end status
+
+    start=$(run_timestamp)
+
+    case "${1:-}" in
+        --print-json)
+            push_metrics --print-json
+            ;;
+        *)
+            push_metrics
+            ;;
+    esac
+    status=$?
+
+    end=$(run_timestamp)
+    log "Run completed in $(format_run_duration "$start" "$end")"
+    return "$status"
+}
+
+main "$@"
+exit $?
