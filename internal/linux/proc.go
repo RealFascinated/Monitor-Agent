@@ -4,6 +4,7 @@ package linux
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"regexp"
 	"strconv"
@@ -58,9 +59,12 @@ func ReadProcStat() ProcStatSnapshot {
 		return ProcStatSnapshot{}
 	}
 	defer file.Close()
+	return parseProcStat(file)
+}
 
+func parseProcStat(r io.Reader) ProcStatSnapshot {
 	var snap ProcStatSnapshot
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) == 0 {
@@ -86,7 +90,7 @@ func ReadProcStat() ProcStatSnapshot {
 				snap.ContextSwitches = ParseUint64(fields[1])
 			}
 		case "intr":
-			if len(fields) == 2 {
+			if len(fields) >= 2 {
 				snap.Interrupts = ParseUint64(fields[1])
 			}
 		}
