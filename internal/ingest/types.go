@@ -52,7 +52,7 @@ type ZFSArcMetrics struct {
 	ArcMinBytes        int64   `json:"arcMinBytes"`
 	ArcDataBytes       int64   `json:"arcDataBytes"`
 	ArcMetadataBytes   int64   `json:"arcMetadataBytes"`
-	L2ArcSizeBytes     int64   `json:"l2ArcSizeBytes"`
+	L2ArcSizeBytes     int64   `json:"l2arcSizeBytes"`
 	ArcHitRatio        float64 `json:"arcHitRatio"`
 	ArcMissesPerSecond int64   `json:"arcMissesPerSecond"`
 }
