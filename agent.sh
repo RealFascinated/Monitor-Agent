@@ -2,7 +2,32 @@
 
 export INGEST_TOKEN=""
 export API_URL="https://monitor.fascinated.cc/api/v1/servers/ingest"
-export AGENT_VERSION="1.1.4"
+export AGENT_VERSION="1.2.0"
+
+read -r -d '' NETWORK_INTERFACE_AWK <<'EOF' || true
+function normalize_iface(name) {
+    sub(/@.*$/, "", name)
+    return name
+}
+function is_common_interface(name) {
+    name = normalize_iface(name)
+    if (name == "" || name == "lo") return 0
+    if (name ~ /^veth/ || name ~ /^fwbr/ || name ~ /^docker/ || name ~ /^br-/ || name ~ /^virbr/) return 0
+    if (name ~ /^(tap|tun|wg|dummy|nlmon|ifb|vnet|lxc|tailscale|pterodactyl)/) return 0
+    return name ~ /^(eth[0-9]+|ens[0-9]+|enp[0-9]+s[0-9]+(d[0-9]+)?(f[0-9]+)?|eno[0-9]+|enx[0-9a-f]+|em[0-9]+|wlan[0-9]+|wlp[0-9]+s[0-9]+|bond[0-9]+|nic[0-9]+|vmbr[0-9]+)$/
+}
+EOF
+
+check_dependencies() {
+    local cmd
+
+    for cmd in jq curl awk; do
+        command -v "$cmd" >/dev/null 2>&1 || {
+            echo "[monitor-agent] Missing required command: $cmd" >&2
+            exit 1
+        }
+    done
+}
 
 get_ip() {
     local ip
@@ -163,9 +188,7 @@ get_cpu_clock_mhz() {
 
 get_os_name() {
     if [[ -r /etc/os-release ]]; then
-        # shellcheck disable=SC1091
-        source /etc/os-release
-        echo "${NAME:-$(uname -s)}"
+        (. /etc/os-release; echo "${NAME:-$(uname -s)}")
         return
     fi
 
@@ -174,9 +197,7 @@ get_os_name() {
 
 get_os_version() {
     if [[ -r /etc/os-release ]]; then
-        # shellcheck disable=SC1091
-        source /etc/os-release
-        echo "${VERSION:-${VERSION_ID:-unknown}}"
+        (. /etc/os-release; echo "${VERSION:-${VERSION_ID:-unknown}}")
         return
     fi
 
@@ -190,15 +211,6 @@ get_uptime_seconds() {
 read_cpu_stat_line() {
     awk '/^cpu / {
         print $2, $3, $4, $5, $6, $7, $8, $9
-        exit
-    }' /proc/stat
-}
-
-read_cpu_stat() {
-    awk '/^cpu / {
-        idle = $5 + $6
-        total = $2 + $3 + $4 + idle + $7 + $8 + $9 + ($10 + $11)
-        print idle, total
         exit
     }' /proc/stat
 }
@@ -263,64 +275,15 @@ get_cpu_capacity_usec_per_second() {
     echo $((online_cpus * 1000000))
 }
 
-get_cpu_usage_from_proc_stat() {
-    local idle1 total1 idle2 total2
-
-    read -r idle1 total1 < <(read_cpu_stat)
-    sleep 1
-    read -r idle2 total2 < <(read_cpu_stat)
-    compute_cpu_usage_from_proc_stat_samples "$idle1" "$total1" "$idle2" "$total2"
-}
-
-compute_cpu_usage_from_proc_stat_samples() {
-    local idle1="$1" total1="$2" idle2="$3" total2="$4" dt di
-
-    dt=$((total2 - total1))
-    di=$((idle2 - idle1))
-
-    if (( dt <= 0 )); then
-        echo "0"
-        return
-    fi
-
-    awk -v dt="$dt" -v di="$di" 'BEGIN { printf "%.2f", (dt - di) / dt * 100 }'
-}
-
-get_cpu_usage() {
-    local cgroup_dir usage1 usage2
-
-    cgroup_dir=$(get_cgroup_dir)
-    if [[ -n "$cgroup_dir" && -r "$cgroup_dir/cpu.stat" ]]; then
-        usage1=$(read_cgroup_cpu_usage_usec "$cgroup_dir")
-        sleep 1
-        usage2=$(read_cgroup_cpu_usage_usec "$cgroup_dir")
-        compute_cpu_usage_from_cgroup_samples "$usage1" "$usage2" && return
-    fi
-
-    get_cpu_usage_from_proc_stat
-}
-
 read_network_stats() {
-    awk '
-        function normalize_iface(name) {
-            sub(/@.*$/, "", name)
-            return name
-        }
-        function is_common_interface(name) {
-            name = normalize_iface(name)
-            if (name == "" || name == "lo") return 0
-            if (name ~ /^veth/ || name ~ /^fwbr/ || name ~ /^docker/ || name ~ /^br-/ || name ~ /^virbr/) return 0
-            if (name ~ /^(tap|tun|wg|dummy|nlmon|ifb|vnet|lxc|tailscale|pterodactyl)/) return 0
-            return name ~ /^(eth[0-9]+|ens[0-9]+|enp[0-9]+s[0-9]+(d[0-9]+)?(f[0-9]+)?|eno[0-9]+|enx[0-9a-f]+|em[0-9]+|wlan[0-9]+|wlp[0-9]+s[0-9]+|bond[0-9]+|nic[0-9]+|vmbr[0-9]+)$/
-        }
-        NR > 2 {
-            iface = $1
-            sub(/:$/, "", iface)
-            if (!is_common_interface(iface)) next
-            iface = normalize_iface(iface)
-            print iface, $2, $3, $4, $10, $11, $12
-        }
-    ' /proc/net/dev
+    awk "$NETWORK_INTERFACE_AWK"'
+NR > 2 {
+    iface = $1
+    sub(/:$/, "", iface)
+    if (!is_common_interface(iface)) next
+    iface = normalize_iface(iface)
+    print iface, $2, $3, $4, $10, $11, $12
+}' /proc/net/dev
 }
 
 compute_cpu_usage_from_cgroup_samples() {
@@ -638,7 +601,7 @@ lookup_diskstats_delta() {
             if (write_iops < 0) write_iops = 0
 
             # Field 13: ms with at least one I/O in flight over the sample window → 0–100%.
-            io_usage = io_ms_delta / 10
+            io_usage = (io_ms_delta > 1000 ? 100 : io_ms_delta / 10)
             io_wait = (read_iops + write_iops > 0) ? (read_ms_delta + write_ms_delta) / (read_iops + write_iops) : 0
             read_latency = (read_iops > 0) ? read_ms_delta / read_iops : 0
             write_latency = (write_iops > 0) ? write_ms_delta / write_iops : 0
@@ -676,10 +639,6 @@ lookup_zfs_pool_vdev_disk_stats() {
     read_lat=$(awk -v ms="$total_read_ms" -v ops="$total_read_iops" 'BEGIN { if (ops > 0) printf "%.2f", ms / ops; else print "0.00" }')
     write_lat=$(awk -v ms="$total_write_ms" -v ops="$total_write_iops" 'BEGIN { if (ops > 0) printf "%.2f", ms / ops; else print "0.00" }')
     printf '%.2f %.2f %d %d %.2f %.2f\n' "$max_usage" "$max_wait" "$total_read_iops" "$total_write_iops" "$read_lat" "$write_lat"
-}
-
-lookup_zfs_pool_vdev_io_util() {
-    lookup_zfs_pool_vdev_disk_stats "$@" | awk '{ printf "%s %s\n", $1, $2 }'
 }
 
 lookup_cgroup_io_bps() {
@@ -824,52 +783,40 @@ compute_disk_metrics_json() {
 compute_interface_metrics_json() {
     local snap1="$1" snap2="$2"
 
-    awk '
-        function normalize_iface(name) {
-            sub(/@.*$/, "", name)
-            return name
-        }
-        function is_common_interface(name) {
-            name = normalize_iface(name)
-            if (name == "" || name == "lo") return 0
-            if (name ~ /^veth/ || name ~ /^fwbr/ || name ~ /^docker/ || name ~ /^br-/ || name ~ /^virbr/) return 0
-            if (name ~ /^(tap|tun|wg|dummy|nlmon|ifb|vnet|lxc|tailscale|pterodactyl)/) return 0
-            return name ~ /^(eth[0-9]+|ens[0-9]+|enp[0-9]+s[0-9]+(d[0-9]+)?(f[0-9]+)?|eno[0-9]+|enx[0-9a-f]+|em[0-9]+|wlan[0-9]+|wlp[0-9]+s[0-9]+|bond[0-9]+|nic[0-9]+|vmbr[0-9]+)$/
-        }
-        FNR == NR {
-            if ($1 == "" || !is_common_interface($1)) next
-            iface = normalize_iface($1)
-            prev_rx_bytes[iface] = $2
-            prev_rx_packets[iface] = $3
-            prev_rx_errors[iface] = $4
-            prev_tx_bytes[iface] = $5
-            prev_tx_packets[iface] = $6
-            prev_tx_errors[iface] = $7
-            next
-        }
-        $1 == "" || !is_common_interface($1) { next }
-        {
-            iface = normalize_iface($1)
-            if (!(iface in prev_rx_bytes)) next
+    awk "$NETWORK_INTERFACE_AWK"'
+FNR == NR {
+    if ($1 == "" || !is_common_interface($1)) next
+    iface = normalize_iface($1)
+    prev_rx_bytes[iface] = $2
+    prev_rx_packets[iface] = $3
+    prev_rx_errors[iface] = $4
+    prev_tx_bytes[iface] = $5
+    prev_tx_packets[iface] = $6
+    prev_tx_errors[iface] = $7
+    next
+}
+$1 == "" || !is_common_interface($1) { next }
+{
+    iface = normalize_iface($1)
+    if (!(iface in prev_rx_bytes)) next
 
-            rx_bytes = $2 - prev_rx_bytes[iface]
-            rx_packets = $3 - prev_rx_packets[iface]
-            rx_errors = $4 - prev_rx_errors[iface]
-            tx_bytes = $5 - prev_tx_bytes[iface]
-            tx_packets = $6 - prev_tx_packets[iface]
-            tx_errors = $7 - prev_tx_errors[iface]
+    rx_bytes = $2 - prev_rx_bytes[iface]
+    rx_packets = $3 - prev_rx_packets[iface]
+    rx_errors = $4 - prev_rx_errors[iface]
+    tx_bytes = $5 - prev_tx_bytes[iface]
+    tx_packets = $6 - prev_tx_packets[iface]
+    tx_errors = $7 - prev_tx_errors[iface]
 
-            if (rx_bytes < 0) rx_bytes = 0
-            if (rx_packets < 0) rx_packets = 0
-            if (rx_errors < 0) rx_errors = 0
-            if (tx_bytes < 0) tx_bytes = 0
-            if (tx_packets < 0) tx_packets = 0
-            if (tx_errors < 0) tx_errors = 0
+    if (rx_bytes < 0) rx_bytes = 0
+    if (rx_packets < 0) rx_packets = 0
+    if (rx_errors < 0) rx_errors = 0
+    if (tx_bytes < 0) tx_bytes = 0
+    if (tx_packets < 0) tx_packets = 0
+    if (tx_errors < 0) tx_errors = 0
 
-            printf("%s\t%d\t%d\t%d\t%d\t%d\t%d\n",
-                iface, rx_bytes, tx_bytes, rx_packets, tx_packets, rx_errors, tx_errors)
-        }
-    ' <(echo "$snap1") <(echo "$snap2") | jq -R -s '
+    printf("%s\t%d\t%d\t%d\t%d\t%d\t%d\n",
+        iface, rx_bytes, tx_bytes, rx_packets, tx_packets, rx_errors, tx_errors)
+}' <(echo "$snap1") <(echo "$snap2") | jq -R -s '
         split("\n")
         | map(select(length > 0))
         | map(split("\t"))
@@ -892,6 +839,8 @@ sample_rate_metrics() {
     local zfs_iostat_tmp="" zfs_iostat_pid=""
     local cpu_line1 cpu_line2 cpu_metrics interface_metrics disk_metrics
     local stat_counters1 stat_counters2 arc_snap1 arc_snap2
+
+    trap '[[ -n "${zfs_iostat_tmp:-}" ]] && rm -f "$zfs_iostat_tmp"' RETURN
 
     RATE_ZFS_POOL_IO=""
     cgroup_dir=$(get_cgroup_dir)
@@ -1260,10 +1209,61 @@ get_memory_usage() {
     ' /proc/meminfo
 }
 
+read_docker_container_stats() {
+    command -v docker >/dev/null 2>&1 || return 1
+    docker info >/dev/null 2>&1 || return 1
+    docker stats --format json --no-stream --no-trunc 2>/dev/null
+}
+
+compute_docker_container_metrics_json() {
+    local stats
+
+    stats=$(read_docker_container_stats 2>/dev/null) || {
+        echo "[]"
+        return
+    }
+
+    if [[ -z "$stats" ]]; then
+        echo "[]"
+        return
+    fi
+
+    jq -R -s '
+        def parse_docker_bytes:
+            gsub(" "; "") as $value
+            | ($value | capture("^(?<amount>-?[0-9.]+)(?<unit>.+)$")) as $parts
+            | if $parts == null then 0
+              else
+                ($parts.amount | tonumber) * (
+                    if $parts.unit == "TiB" then 1099511627776
+                    elif $parts.unit == "GiB" then 1073741824
+                    elif $parts.unit == "MiB" then 1048576
+                    elif $parts.unit == "KiB" then 1024
+                    elif $parts.unit == "B" then 1
+                    elif $parts.unit == "TB" then 1000000000000
+                    elif $parts.unit == "GB" then 1000000000
+                    elif $parts.unit == "MB" then 1000000
+                    elif $parts.unit == "KB" then 1000
+                    else 0 end
+                ) | round
+              end;
+
+        split("\n")
+        | map(select(length > 0))
+        | map(fromjson)
+        | map(select(.Name != null and .Name != ""))
+        | map({
+            containerName: .Name,
+            cpuUsage: ((.CPUPerc // "0%") | rtrimstr("%") | tonumber * 100 | round),
+            memoryUsage: ((.MemUsage // "") | split(" / ")[0] | parse_docker_bytes)
+        })
+    ' <<<"$stats"
+}
+
 build_payload() {
     local mem_buffers mem_cached swap_used swap_total cpu_clock_mhz
     local process_count running_processes memory_available
-    local zfs_arc_metrics_json zfs_pool_metrics_json
+    local zfs_arc_metrics_json zfs_pool_metrics_json docker_container_metrics_json
 
     sample_rate_metrics
     read -r mem_buffers mem_cached swap_used swap_total < <(read_memory_extras)
@@ -1276,6 +1276,7 @@ build_payload() {
         zfs_arc_metrics_json="null"
     fi
     zfs_pool_metrics_json=$(compute_zfs_pool_metrics_json "${RATE_ZFS_POOL_IO:-}")
+    docker_container_metrics_json=$(compute_docker_container_metrics_json)
 
     cpu_clock_mhz=$(get_cpu_clock_mhz 2>/dev/null | head -n1 | tr -d '\r')
     if [[ ! "$cpu_clock_mhz" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
@@ -1316,6 +1317,7 @@ build_payload() {
         --argjson zfsPoolMetrics "$zfs_pool_metrics_json" \
         --argjson interfaceMetrics "$RATE_INTERFACE_METRICS" \
         --argjson diskMetrics "$RATE_DISK_METRICS" \
+        --argjson dockerContainers "$docker_container_metrics_json" \
         '{
             agentVersion: $agentVersion,
             serverDetails: {
@@ -1353,7 +1355,8 @@ build_payload() {
             zfsArcMetrics: $zfsArcMetrics,
             zfsPoolMetrics: $zfsPoolMetrics,
             interfaceMetrics: $interfaceMetrics,
-            diskMetrics: $diskMetrics
+            diskMetrics: $diskMetrics,
+            dockerContainers: $dockerContainers
         }'
 }
 
@@ -1409,6 +1412,7 @@ format_run_duration() {
 main() {
     local start end status
 
+    check_dependencies
     start=$(run_timestamp)
 
     case "${1:-}" in
