@@ -1215,8 +1215,34 @@ read_docker_container_stats() {
     docker stats --format json --no-stream --no-trunc 2>/dev/null
 }
 
+get_docker_host_cpu_count() {
+    local count
+
+    if command -v docker >/dev/null 2>&1; then
+        count=$(docker info --format '{{.NCPU}}' 2>/dev/null)
+        if [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]]; then
+            echo "$count"
+            return
+        fi
+    fi
+
+    count=$(read_lscpu_value "CPU(s):")
+    if [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]]; then
+        echo "$count"
+        return
+    fi
+
+    count=$(awk '/^processor[[:space:]]*:/ { n++ } END { print n + 0 }' /proc/cpuinfo)
+    if [[ "$count" =~ ^[0-9]+$ && "$count" -gt 0 ]]; then
+        echo "$count"
+        return
+    fi
+
+    get_online_cpu_count
+}
+
 compute_docker_container_metrics_json() {
-    local stats core_count
+    local stats host_cpus
 
     stats=$(read_docker_container_stats 2>/dev/null) || {
         echo "[]"
@@ -1228,10 +1254,10 @@ compute_docker_container_metrics_json() {
         return
     fi
 
-    core_count=$(get_online_cpu_count)
-    (( core_count > 0 )) || core_count=1
+    host_cpus=$(get_docker_host_cpu_count)
+    (( host_cpus > 0 )) || host_cpus=1
 
-    jq -R -s --argjson coreCount "$core_count" '
+    jq -R -s --argjson hostCpus "$host_cpus" '
         def parse_docker_bytes:
             gsub(" "; "") as $value
             | ($value | capture("^(?<amount>-?[0-9.]+)(?<unit>.+)$")) as $parts
@@ -1261,7 +1287,8 @@ compute_docker_container_metrics_json() {
                 (.CPUPerc // "0%")
                 | rtrimstr("%")
                 | tonumber
-                | . / $coreCount
+                | . / $hostCpus
+                | if . > 100 then 100 elif . < 0 then 0 else . end
                 | . * 100 | round | . / 100
             ),
             memoryUsage: ((.MemUsage // "") | split(" / ")[0] | parse_docker_bytes)
