@@ -102,5 +102,4 @@ jobs:
           files: |
             dist/monitor-agent-*
             dist/config-example.yml
-            dist/install.sh
             dist/checksums.txt
