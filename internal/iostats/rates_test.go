@@ -1,9 +1,24 @@
 package iostats
 
 import (
+	"math"
 	"testing"
 	"time"
 )
+
+func TestUint64ToInt64(t *testing.T) {
+	t.Parallel()
+
+	if got := Uint64ToInt64(42); got != 42 {
+		t.Fatalf("got %d, want 42", got)
+	}
+	if got := Uint64ToInt64(uint64(math.MaxInt64)); got != math.MaxInt64 {
+		t.Fatalf("got %d, want max int64", got)
+	}
+	if got := Uint64ToInt64(uint64(math.MaxInt64) + 1); got != math.MaxInt64 {
+		t.Fatalf("got %d, want capped max int64", got)
+	}
+}
 
 func TestPerSecond(t *testing.T) {
 	if got := PerSecond(2000, 2*time.Second); got != 1000 {

@@ -40,13 +40,13 @@ func ComputeArcMetrics(before, after ArcSnapshot, elapsed time.Duration) *ingest
 	}
 
 	return &ingest.ZFSArcMetrics{
-		ArcSizeBytes:       int64(after.Size),
-		ArcTargetBytes:     int64(after.Target),
-		ArcMaxBytes:        int64(after.Max),
-		ArcMinBytes:        int64(after.Min),
-		ArcDataBytes:       int64(after.Data),
-		ArcMetadataBytes:   int64(after.Metadata),
-		L2ArcSizeBytes:     int64(after.L2),
+		ArcSizeBytes:       iostats.Uint64ToInt64(after.Size),
+		ArcTargetBytes:     iostats.Uint64ToInt64(after.Target),
+		ArcMaxBytes:        iostats.Uint64ToInt64(after.Max),
+		ArcMinBytes:        iostats.Uint64ToInt64(after.Min),
+		ArcDataBytes:       iostats.Uint64ToInt64(after.Data),
+		ArcMetadataBytes:   iostats.Uint64ToInt64(after.Metadata),
+		L2ArcSizeBytes:     iostats.Uint64ToInt64(after.L2),
 		ArcHitRatio:        hitRatio,
 		ArcMissesPerSecond: iostats.PerSecond(missesDelta, elapsed),
 	}

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"fascinated.cc/monitor/agent/internal/iostats"
 )
 
 func ReadPoolIOSnapshots() map[string]PoolIO {
@@ -89,10 +91,10 @@ func parsePoolIostatOutput(out []byte) map[string]PoolIORates {
 			continue
 		}
 		rates[fields[0]] = PoolIORates{
-			ReadIops:            int64(parseUint64(fields[3])),
-			WriteIops:           int64(parseUint64(fields[4])),
-			ReadBytesPerSecond:  int64(parseUint64(fields[5])),
-			WriteBytesPerSecond: int64(parseUint64(fields[6])),
+			ReadIops:            iostats.Uint64ToInt64(parseUint64(fields[3])),
+			WriteIops:           iostats.Uint64ToInt64(parseUint64(fields[4])),
+			ReadBytesPerSecond:  iostats.Uint64ToInt64(parseUint64(fields[5])),
+			WriteBytesPerSecond: iostats.Uint64ToInt64(parseUint64(fields[6])),
 		}
 	}
 	return rates

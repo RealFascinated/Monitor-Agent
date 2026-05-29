@@ -25,11 +25,23 @@ type IOCounts struct {
 	IoTime                uint64
 }
 
+// Uint64ToInt64 converts v to int64, capping at math.MaxInt64.
+func Uint64ToInt64(v uint64) int64 {
+	if v > uint64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(v)
+}
+
 func PerSecond(count uint64, elapsed time.Duration) int64 {
 	if elapsed <= 0 {
-		return int64(count)
+		return Uint64ToInt64(count)
 	}
-	return int64(float64(count) / elapsed.Seconds())
+	rate := float64(count) / elapsed.Seconds()
+	if rate > float64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(rate)
 }
 
 func PerSecondFloat(count float64, elapsed time.Duration) float64 {
