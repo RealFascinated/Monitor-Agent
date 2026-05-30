@@ -19,7 +19,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # GHCR requires lowercase repository paths (github.repository is mixed case).
+  IMAGE_NAME: ${{ toLower(github.repository) }}
 
 jobs:
   docker:
