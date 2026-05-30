@@ -20,8 +20,6 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  # GHCR requires lowercase repository paths (github.repository is mixed case).
-  IMAGE_NAME: ${{ toLower(github.repository) }}
 
 jobs:
   docker:
@@ -38,6 +36,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          image="${{ env.REGISTRY }}/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             tag="${{ github.event.inputs.tag }}"
@@ -48,7 +48,7 @@ jobs:
                 echo "mode=master"
                 echo "version=$version"
                 echo "tags<<EOF"
-                echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master"
+                echo "${image}:master"
                 echo "EOF"
               } >> "$GITHUB_OUTPUT"
               exit 0
@@ -63,8 +63,8 @@ jobs:
               echo "mode=release"
               echo "version=$version"
               echo "tags<<EOF"
-              echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${version}"
-              echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+              echo "${image}:${version}"
+              echo "${image}:latest"
               echo "EOF"
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -76,7 +76,7 @@ jobs:
               echo "mode=master"
               echo "version=$version"
               echo "tags<<EOF"
-              echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master"
+              echo "${image}:master"
               echo "EOF"
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -92,8 +92,8 @@ jobs:
             echo "mode=release"
             echo "version=$version"
             echo "tags<<EOF"
-            echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${version}"
-            echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+            echo "${image}:${version}"
+            echo "${image}:latest"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -111,7 +111,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ steps.build.outputs.image }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
