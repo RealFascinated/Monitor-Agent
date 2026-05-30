@@ -42,7 +42,7 @@ func ListMounts() ([]Mount, error) {
 			continue
 		}
 
-		used, total, inodeUsed, inodeTotal, err := statfsUsage(entry.mountpoint)
+		used, total, inodeUsed, inodeTotal, err := statfsUsage(linux.HostPath(entry.mountpoint))
 		if err != nil || total == 0 {
 			continue
 		}
@@ -68,7 +68,7 @@ func ListMounts() ([]Mount, error) {
 }
 
 func readMountEntries() ([]mountEntry, error) {
-	file, err := os.Open("/proc/self/mountinfo")
+	file, err := os.Open(linux.MountInfoPath())
 	if err != nil {
 		return nil, err
 	}

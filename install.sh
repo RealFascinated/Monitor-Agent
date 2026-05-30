@@ -18,19 +18,25 @@ UNRAID_GO_MARKER="# monitor-agent (installed by Monitor Agent)"
 
 usage() {
   cat <<EOF
-Install the Monitor agent on Linux (including Unraid).
+Install or remove the Monitor agent on Linux (including Unraid).
 
 Usage:
-  sudo $0 <ingest_token> [options]
+  sudo $0 install <ingest_token> [options]
+  sudo $0 uninstall
 
-Options:
+Commands:
+  install                 Install the agent
+  uninstall               Stop the agent and remove installed files
+
+Options (install only):
   --version VERSION       Agent release version (default: latest GitHub release)
   --api-endpoint URL      Ingest API endpoint (default: ${DEFAULT_API_ENDPOINT})
   --auto-update VALUE     Daily self-updates (default: true)
   -h, --help              Show this help message
 
-Example:
-  curl -fsSL https://github.com/${GITHUB_REPO}/releases/download/agent/v${DEFAULT_VERSION}/install.sh | sudo bash -s -- YOUR_INGEST_TOKEN
+Examples:
+  curl -fsSL https://github.com/${GITHUB_REPO}/releases/download/agent/v${DEFAULT_VERSION}/install.sh | sudo bash -s -- install YOUR_INGEST_TOKEN
+  curl -fsSL https://github.com/${GITHUB_REPO}/releases/download/agent/v${DEFAULT_VERSION}/install.sh | sudo bash -s -- uninstall
 EOF
 }
 
@@ -270,6 +276,176 @@ install_unraid_service() {
   "$UNRAID_START_SCRIPT"
 }
 
+remove_file() {
+  local path="$1"
+  local label="$2"
+
+  if [[ -e "$path" ]]; then
+    log "Removing ${label}: ${path}"
+    rm -f "$path"
+  fi
+}
+
+stop_unraid_agent() {
+  local pidfile="/var/run/monitor-agent.pid"
+
+  [[ -f "$pidfile" ]] || return
+
+  local pid
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    log "Stopping monitor-agent (pid ${pid})"
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$pidfile"
+}
+
+remove_unraid_go_hook() {
+  local go_file="/boot/config/go"
+
+  [[ -f "$go_file" ]] || return
+  grep -qF "$UNRAID_GO_MARKER" "$go_file" 2>/dev/null || return
+
+  local tmp
+  tmp="$(mktemp)"
+  awk -v marker="$UNRAID_GO_MARKER" '
+    $0 == marker { skip = 1; next }
+    skip { skip = 0; next }
+    { print }
+  ' "$go_file" >"$tmp"
+  mv "$tmp" "$go_file"
+  log "Removed array-start hook from ${go_file}"
+}
+
+uninstall_unraid() {
+  stop_unraid_agent
+  remove_file "$UNRAID_CRON_FILE" "watchdog cron"
+  remove_file "$UNRAID_UPDATE_CRON_FILE" "update cron"
+  remove_unraid_go_hook
+  remove_file "$UNRAID_START_SCRIPT" "start script"
+  remove_file "${UNRAID_PLUGIN_DIR}/start.sh" "legacy start script"
+  remove_file "$INSTALL_BIN" "runtime binary"
+  if [[ -d "$UNRAID_PLUGIN_DIR" ]]; then
+    log "Removing plugin directory: ${UNRAID_PLUGIN_DIR}"
+    rm -rf "$UNRAID_PLUGIN_DIR"
+  fi
+}
+
+uninstall_systemd() {
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl disable --now "${SERVICE_NAME}-update.timer" 2>/dev/null || true
+    systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+    systemctl stop "${SERVICE_NAME}-update.timer" 2>/dev/null || true
+    systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  fi
+
+  remove_file "/etc/systemd/system/${SERVICE_NAME}-update.timer" "update timer"
+  remove_file "/etc/systemd/system/${SERVICE_NAME}-update.service" "update service"
+  remove_file "$SERVICE_FILE" "systemd service"
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+  fi
+
+  remove_file "$INSTALL_BIN" "binary"
+  remove_file "${INSTALL_BIN}.old" "binary backup"
+  if [[ -d "$CONFIG_DIR" && "$CONFIG_DIR" == /etc/monitor-agent ]]; then
+    log "Removing config directory: ${CONFIG_DIR}"
+    rm -rf "$CONFIG_DIR"
+  fi
+}
+
+uninstall() {
+  log "Uninstalling monitor-agent"
+
+  if is_unraid || [[ -d "$UNRAID_PLUGIN_DIR" ]]; then
+    uninstall_unraid
+    if is_unraid; then
+      reload_unraid_cron
+    fi
+  fi
+
+  if [[ -f "$SERVICE_FILE" ]] || [[ -f "/etc/systemd/system/${SERVICE_NAME}-update.timer" ]]; then
+    uninstall_systemd
+  elif [[ -f /etc/monitor-agent/config.yml ]]; then
+    uninstall_systemd
+  fi
+
+  remove_file "/var/log/monitor-agent.log" "log file"
+  log "Uninstall complete"
+}
+
+install_agent() {
+  configure_install_paths
+
+  ARCH="$(detect_arch)"
+  TMPDIR="$(mktemp -d)"
+  trap 'rm -rf "$TMPDIR"' EXIT
+
+  if [[ -z "$VERSION" ]]; then
+    VERSION="$(fetch_latest_version)"
+  fi
+
+  DOWNLOADED=""
+  download_release "$VERSION" "$ARCH" "$TMPDIR"
+  [[ -f "$DOWNLOADED" ]] || die "failed to download monitor-agent binary"
+
+  if is_unraid; then
+    log "Installing binary to ${UNRAID_STORED_BIN} (flash) and ${INSTALL_BIN} (runtime)"
+    install -d -m 0755 "$UNRAID_PLUGIN_DIR" "$(dirname "$INSTALL_BIN")"
+    install -m 0755 "$DOWNLOADED" "$UNRAID_STORED_BIN"
+    install -m 0755 "$DOWNLOADED" "$INSTALL_BIN"
+  else
+    log "Installing binary to ${INSTALL_BIN}"
+    install -d -m 0755 "$(dirname "$INSTALL_BIN")"
+    install -m 0755 "$DOWNLOADED" "$INSTALL_BIN"
+  fi
+
+  log "Writing config to ${CONFIG_FILE}"
+  write_config "$INGEST_TOKEN" "$API_ENDPOINT"
+
+  if is_unraid; then
+    log "Installing Unraid service (persistent on flash, no systemd)"
+    install_unraid_service
+
+    if [[ "$AUTO_UPDATE" == "true" ]]; then
+      log "Enabling daily self-updates"
+      install_unraid_update_cron
+    else
+      log "Skipping daily self-updates"
+      remove_unraid_update_cron
+    fi
+
+    log "Monitor agent installed and started"
+    log "Binary (flash): ${UNRAID_STORED_BIN}"
+    log "Binary (runtime): ${INSTALL_BIN}"
+    log "Config: ${CONFIG_FILE}"
+    log "Logs:   /var/log/monitor-agent.log"
+    if [[ -f /var/run/monitor-agent.pid ]]; then
+      log "PID:    $(cat /var/run/monitor-agent.pid)"
+    fi
+  else
+    require_systemd
+    log "Installing systemd service"
+    write_service
+    systemctl daemon-reload
+    systemctl enable --now "$SERVICE_NAME"
+
+    if [[ "$AUTO_UPDATE" == "true" ]]; then
+      log "Enabling daily self-updates"
+      write_update_timer
+    else
+      log "Skipping daily self-updates"
+    fi
+
+    log "Monitor agent installed and started"
+    systemctl --no-pager status "$SERVICE_NAME"
+  fi
+}
+
+COMMAND=""
 INGEST_TOKEN=""
 VERSION=""
 API_ENDPOINT="$DEFAULT_API_ENDPOINT"
@@ -277,17 +453,31 @@ AUTO_UPDATE="true"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    install)
+      COMMAND="install"
+      shift
+      [[ $# -ge 1 ]] || die "install requires an ingest token"
+      INGEST_TOKEN="$1"
+      shift
+      ;;
+    uninstall)
+      COMMAND="uninstall"
+      shift
+      ;;
     --version)
+      [[ "$COMMAND" == "install" ]] || die "options are only valid with install"
       [[ $# -ge 2 ]] || die "--version requires a value"
       VERSION="$2"
       shift 2
       ;;
     --api-endpoint)
+      [[ "$COMMAND" == "install" ]] || die "options are only valid with install"
       [[ $# -ge 2 ]] || die "--api-endpoint requires a value"
       API_ENDPOINT="$2"
       shift 2
       ;;
     --auto-update)
+      [[ "$COMMAND" == "install" ]] || die "options are only valid with install"
       if [[ "$1" == *=* ]]; then
         AUTO_UPDATE="${1#*=}"
         shift
@@ -309,84 +499,23 @@ while [[ $# -gt 0 ]]; do
       die "unknown option: $1"
       ;;
     *)
-      if [[ -n "$INGEST_TOKEN" ]]; then
-        die "unexpected argument: $1"
-      fi
-      INGEST_TOKEN="$1"
-      shift
+      die "unknown argument: $1"
       ;;
   esac
 done
 
-[[ -n "$INGEST_TOKEN" ]] || {
-  usage
-  die "ingest token is required"
-}
-
 require_root
 require_linux
-configure_install_paths
 
-ARCH="$(detect_arch)"
-TMPDIR="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR"' EXIT
-
-if [[ -z "$VERSION" ]]; then
-  VERSION="$(fetch_latest_version)"
-fi
-
-DOWNLOADED=""
-download_release "$VERSION" "$ARCH" "$TMPDIR"
-[[ -f "$DOWNLOADED" ]] || die "failed to download monitor-agent binary"
-
-if is_unraid; then
-  log "Installing binary to ${UNRAID_STORED_BIN} (flash) and ${INSTALL_BIN} (runtime)"
-  install -d -m 0755 "$UNRAID_PLUGIN_DIR" "$(dirname "$INSTALL_BIN")"
-  install -m 0755 "$DOWNLOADED" "$UNRAID_STORED_BIN"
-  install -m 0755 "$DOWNLOADED" "$INSTALL_BIN"
-else
-  log "Installing binary to ${INSTALL_BIN}"
-  install -d -m 0755 "$(dirname "$INSTALL_BIN")"
-  install -m 0755 "$DOWNLOADED" "$INSTALL_BIN"
-fi
-
-log "Writing config to ${CONFIG_FILE}"
-write_config "$INGEST_TOKEN" "$API_ENDPOINT"
-
-if is_unraid; then
-  log "Installing Unraid service (persistent on flash, no systemd)"
-  install_unraid_service
-
-  if [[ "$AUTO_UPDATE" == "true" ]]; then
-    log "Enabling daily self-updates"
-    install_unraid_update_cron
-  else
-    log "Skipping daily self-updates"
-    remove_unraid_update_cron
-  fi
-
-  log "Monitor agent installed and started"
-  log "Binary (flash): ${UNRAID_STORED_BIN}"
-  log "Binary (runtime): ${INSTALL_BIN}"
-  log "Config: ${CONFIG_FILE}"
-  log "Logs:   /var/log/monitor-agent.log"
-  if [[ -f /var/run/monitor-agent.pid ]]; then
-    log "PID:    $(cat /var/run/monitor-agent.pid)"
-  fi
-else
-  require_systemd
-  log "Installing systemd service"
-  write_service
-  systemctl daemon-reload
-  systemctl enable --now "$SERVICE_NAME"
-
-  if [[ "$AUTO_UPDATE" == "true" ]]; then
-    log "Enabling daily self-updates"
-    write_update_timer
-  else
-    log "Skipping daily self-updates"
-  fi
-
-  log "Monitor agent installed and started"
-  systemctl --no-pager status "$SERVICE_NAME"
-fi
+case "$COMMAND" in
+  install)
+    install_agent
+    ;;
+  uninstall)
+    uninstall
+    ;;
+  *)
+    usage
+    die "install or uninstall is required"
+    ;;
+esac
