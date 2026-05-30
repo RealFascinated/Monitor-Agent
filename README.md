@@ -53,7 +53,7 @@ Images are published to GitHub Container Registry on each `agent/v*` release tag
 
 `ghcr.io/realfascinated/monitor-agent`
 
-Pull a versioned tag (for example `2.0.1`) or `latest`.
+Pull a versioned tag (for example `2.0.1`), `latest` (releases), or `master` (every push to the `master` branch).
 
 ### Example `docker-compose.yml`
 
