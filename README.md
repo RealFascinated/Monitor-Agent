@@ -40,13 +40,6 @@ wget -O /boot/config/plugins/dockerMan/templates-user/monitor-agent.xml \
 
 Then open **Docker → Add Container**, choose **monitor-agent**, enter your **Ingest Token**, and apply. Defaults mount the host `/proc`, `/sys`, `/dev`, array root at `/host`, and the Docker socket for full metrics on Unraid (including `/mnt/*` shares and ZFS).
 
-Alternatively, use the native plugin installer (no Docker):
-
-```bash
-curl -fsSL https://github.com/RealFascinated/Monitor-Agent/releases/latest/download/install.sh \
-  | bash -s -- install YOUR_INGEST_TOKEN
-```
-
 ## Docker
 
 Images are published to GitHub Container Registry on each `agent/v*` release tag:

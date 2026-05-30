@@ -9,16 +9,10 @@ CONFIG_DIR="/etc/monitor-agent"
 CONFIG_FILE="${CONFIG_DIR}/config.yml"
 SERVICE_NAME="monitor-agent"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-UNRAID_PLUGIN_DIR="/boot/config/plugins/monitor-agent"
-UNRAID_STORED_BIN="${UNRAID_PLUGIN_DIR}/monitor-agent"
-UNRAID_START_SCRIPT="/usr/local/bin/monitor-agent-start.sh"
-UNRAID_CRON_FILE="/boot/config/plugins/dynamix/monitor-agent.cron"
-UNRAID_UPDATE_CRON_FILE="/boot/config/plugins/dynamix/monitor-agent-update.cron"
-UNRAID_GO_MARKER="# monitor-agent (installed by Monitor Agent)"
 
 usage() {
   cat <<EOF
-Install or remove the Monitor agent on Linux (including Unraid).
+Install or remove the Monitor agent on Linux (systemd).
 
 Usage:
   sudo $0 install <ingest_token> [options]
@@ -51,7 +45,7 @@ die() {
 
 require_root() {
   if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-    die "run as root (e.g. sudo $0 <ingest_token>)"
+    die "run as root (e.g. sudo $0 install <ingest_token>)"
   fi
 }
 
@@ -64,29 +58,10 @@ require_linux() {
   esac
 }
 
-is_unraid() {
-  [[ -f /etc/unraid-version ]]
-}
-
 require_systemd() {
-  is_unraid && die "systemd install path called on Unraid"
   command -v systemctl >/dev/null 2>&1 || die "systemctl not found"
   [[ -d /etc/systemd/system ]] || die "/etc/systemd/system not found"
   [[ "$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')" == "systemd" ]] || die "init is not systemd"
-}
-
-configure_install_paths() {
-  if ! is_unraid; then
-    return
-  fi
-  CONFIG_DIR="${UNRAID_PLUGIN_DIR}"
-  CONFIG_FILE="${CONFIG_DIR}/config.yml"
-}
-
-reload_unraid_cron() {
-  command -v update_cron >/dev/null 2>&1 || die "update_cron not found (Unraid dynamix cron plugin required)"
-  update_cron
-  log "Reloaded Unraid cron (update_cron)"
 }
 
 detect_arch() {
@@ -202,80 +177,6 @@ EOF
   systemctl enable --now "${SERVICE_NAME}-update.timer"
 }
 
-install_unraid_start_script() {
-  cat >"$UNRAID_START_SCRIPT" <<'EOF'
-#!/bin/bash
-set -euo pipefail
-
-PLUGIN_DIR="/boot/config/plugins/monitor-agent"
-STORED_BIN="${PLUGIN_DIR}/monitor-agent"
-RUN_BIN="/usr/local/bin/monitor-agent"
-CONFIG="${PLUGIN_DIR}/config.yml"
-PIDFILE="/var/run/monitor-agent.pid"
-LOG="/var/log/monitor-agent.log"
-
-if [[ -f "$PIDFILE" ]]; then
-  pid="$(cat "$PIDFILE" 2>/dev/null || true)"
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    exit 0
-  fi
-fi
-
-[[ -f "$STORED_BIN" ]] || exit 1
-install -m 0755 "$STORED_BIN" "$RUN_BIN"
-nohup env MONITOR_CONFIG_FILE="$CONFIG" "$RUN_BIN" >>"$LOG" 2>&1 &
-echo $! >"$PIDFILE"
-EOF
-  chmod 755 "$UNRAID_START_SCRIPT"
-}
-
-install_unraid_go_hook() {
-  local go_file="/boot/config/go"
-
-  [[ -f "$go_file" ]] || die "/boot/config/go not found; is the Unraid flash drive mounted?"
-
-  if grep -qF "$UNRAID_GO_MARKER" "$go_file" 2>/dev/null; then
-    return
-  fi
-
-  {
-    printf '\n%s\n' "$UNRAID_GO_MARKER"
-    printf '%s\n' "$UNRAID_START_SCRIPT"
-  } >>"$go_file"
-  log "Added array-start hook to ${go_file}"
-}
-
-install_unraid_watchdog_cron() {
-  printf '%s\n' "*/5 * * * * ${UNRAID_START_SCRIPT} >>/var/log/monitor-agent.log 2>&1" >"$UNRAID_CRON_FILE"
-  chmod 644 "$UNRAID_CRON_FILE"
-  reload_unraid_cron
-  log "Installed watchdog cron: ${UNRAID_CRON_FILE}"
-}
-
-install_unraid_update_cron() {
-  printf '%s\n' "0 4 * * * ${INSTALL_BIN} update && cp -f ${INSTALL_BIN} ${UNRAID_STORED_BIN} && ${UNRAID_START_SCRIPT} >>/var/log/monitor-agent.log 2>&1" >"$UNRAID_UPDATE_CRON_FILE"
-  chmod 644 "$UNRAID_UPDATE_CRON_FILE"
-  reload_unraid_cron
-  log "Installed daily update cron: ${UNRAID_UPDATE_CRON_FILE}"
-}
-
-remove_unraid_update_cron() {
-  [[ -f "$UNRAID_UPDATE_CRON_FILE" ]] || return
-  rm -f "$UNRAID_UPDATE_CRON_FILE"
-  reload_unraid_cron
-}
-
-install_unraid_service() {
-  [[ -d /boot/config ]] || die "/boot/config not found; is the Unraid flash drive mounted?"
-
-  install_unraid_start_script
-  install_unraid_go_hook
-  install_unraid_watchdog_cron
-
-  log "Starting monitor-agent"
-  "$UNRAID_START_SCRIPT"
-}
-
 remove_file() {
   local path="$1"
   local label="$2"
@@ -286,54 +187,9 @@ remove_file() {
   fi
 }
 
-stop_unraid_agent() {
-  local pidfile="/var/run/monitor-agent.pid"
+uninstall() {
+  log "Uninstalling monitor-agent"
 
-  [[ -f "$pidfile" ]] || return
-
-  local pid
-  pid="$(cat "$pidfile" 2>/dev/null || true)"
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    log "Stopping monitor-agent (pid ${pid})"
-    kill "$pid" 2>/dev/null || true
-    sleep 1
-    kill -9 "$pid" 2>/dev/null || true
-  fi
-  rm -f "$pidfile"
-}
-
-remove_unraid_go_hook() {
-  local go_file="/boot/config/go"
-
-  [[ -f "$go_file" ]] || return
-  grep -qF "$UNRAID_GO_MARKER" "$go_file" 2>/dev/null || return
-
-  local tmp
-  tmp="$(mktemp)"
-  awk -v marker="$UNRAID_GO_MARKER" '
-    $0 == marker { skip = 1; next }
-    skip { skip = 0; next }
-    { print }
-  ' "$go_file" >"$tmp"
-  mv "$tmp" "$go_file"
-  log "Removed array-start hook from ${go_file}"
-}
-
-uninstall_unraid() {
-  stop_unraid_agent
-  remove_file "$UNRAID_CRON_FILE" "watchdog cron"
-  remove_file "$UNRAID_UPDATE_CRON_FILE" "update cron"
-  remove_unraid_go_hook
-  remove_file "$UNRAID_START_SCRIPT" "start script"
-  remove_file "${UNRAID_PLUGIN_DIR}/start.sh" "legacy start script"
-  remove_file "$INSTALL_BIN" "runtime binary"
-  if [[ -d "$UNRAID_PLUGIN_DIR" ]]; then
-    log "Removing plugin directory: ${UNRAID_PLUGIN_DIR}"
-    rm -rf "$UNRAID_PLUGIN_DIR"
-  fi
-}
-
-uninstall_systemd() {
   if command -v systemctl >/dev/null 2>&1; then
     systemctl disable --now "${SERVICE_NAME}-update.timer" 2>/dev/null || true
     systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
@@ -351,34 +207,17 @@ uninstall_systemd() {
 
   remove_file "$INSTALL_BIN" "binary"
   remove_file "${INSTALL_BIN}.old" "binary backup"
-  if [[ -d "$CONFIG_DIR" && "$CONFIG_DIR" == /etc/monitor-agent ]]; then
+  if [[ -d "$CONFIG_DIR" ]]; then
     log "Removing config directory: ${CONFIG_DIR}"
     rm -rf "$CONFIG_DIR"
   fi
-}
-
-uninstall() {
-  log "Uninstalling monitor-agent"
-
-  if is_unraid || [[ -d "$UNRAID_PLUGIN_DIR" ]]; then
-    uninstall_unraid
-    if is_unraid; then
-      reload_unraid_cron
-    fi
-  fi
-
-  if [[ -f "$SERVICE_FILE" ]] || [[ -f "/etc/systemd/system/${SERVICE_NAME}-update.timer" ]]; then
-    uninstall_systemd
-  elif [[ -f /etc/monitor-agent/config.yml ]]; then
-    uninstall_systemd
-  fi
-
   remove_file "/var/log/monitor-agent.log" "log file"
+
   log "Uninstall complete"
 }
 
 install_agent() {
-  configure_install_paths
+  require_systemd
 
   ARCH="$(detect_arch)"
   TMPDIR="$(mktemp -d)"
@@ -392,57 +231,27 @@ install_agent() {
   download_release "$VERSION" "$ARCH" "$TMPDIR"
   [[ -f "$DOWNLOADED" ]] || die "failed to download monitor-agent binary"
 
-  if is_unraid; then
-    log "Installing binary to ${UNRAID_STORED_BIN} (flash) and ${INSTALL_BIN} (runtime)"
-    install -d -m 0755 "$UNRAID_PLUGIN_DIR" "$(dirname "$INSTALL_BIN")"
-    install -m 0755 "$DOWNLOADED" "$UNRAID_STORED_BIN"
-    install -m 0755 "$DOWNLOADED" "$INSTALL_BIN"
-  else
-    log "Installing binary to ${INSTALL_BIN}"
-    install -d -m 0755 "$(dirname "$INSTALL_BIN")"
-    install -m 0755 "$DOWNLOADED" "$INSTALL_BIN"
-  fi
+  log "Installing binary to ${INSTALL_BIN}"
+  install -d -m 0755 "$(dirname "$INSTALL_BIN")"
+  install -m 0755 "$DOWNLOADED" "$INSTALL_BIN"
 
   log "Writing config to ${CONFIG_FILE}"
   write_config "$INGEST_TOKEN" "$API_ENDPOINT"
 
-  if is_unraid; then
-    log "Installing Unraid service (persistent on flash, no systemd)"
-    install_unraid_service
+  log "Installing systemd service"
+  write_service
+  systemctl daemon-reload
+  systemctl enable --now "$SERVICE_NAME"
 
-    if [[ "$AUTO_UPDATE" == "true" ]]; then
-      log "Enabling daily self-updates"
-      install_unraid_update_cron
-    else
-      log "Skipping daily self-updates"
-      remove_unraid_update_cron
-    fi
-
-    log "Monitor agent installed and started"
-    log "Binary (flash): ${UNRAID_STORED_BIN}"
-    log "Binary (runtime): ${INSTALL_BIN}"
-    log "Config: ${CONFIG_FILE}"
-    log "Logs:   /var/log/monitor-agent.log"
-    if [[ -f /var/run/monitor-agent.pid ]]; then
-      log "PID:    $(cat /var/run/monitor-agent.pid)"
-    fi
+  if [[ "$AUTO_UPDATE" == "true" ]]; then
+    log "Enabling daily self-updates"
+    write_update_timer
   else
-    require_systemd
-    log "Installing systemd service"
-    write_service
-    systemctl daemon-reload
-    systemctl enable --now "$SERVICE_NAME"
-
-    if [[ "$AUTO_UPDATE" == "true" ]]; then
-      log "Enabling daily self-updates"
-      write_update_timer
-    else
-      log "Skipping daily self-updates"
-    fi
-
-    log "Monitor agent installed and started"
-    systemctl --no-pager status "$SERVICE_NAME"
+    log "Skipping daily self-updates"
   fi
+
+  log "Monitor agent installed and started"
+  systemctl --no-pager status "$SERVICE_NAME"
 }
 
 COMMAND=""
