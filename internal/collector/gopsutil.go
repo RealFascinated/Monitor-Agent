@@ -44,6 +44,7 @@ func collectGopsutil(opts Options, platformOpts gopsutilOptions) (Result, error)
 	if err != nil || len(cpuBefore) == 0 {
 		return result, err
 	}
+	perCPUBefore, _ := cpu.Times(true)
 
 	netBefore, err := network.ReadCounters()
 	if err != nil {
@@ -91,6 +92,7 @@ func collectGopsutil(opts Options, platformOpts gopsutilOptions) (Result, error)
 	if err != nil || len(cpuAfter) == 0 {
 		return result, err
 	}
+	perCPUAfter, _ := cpu.Times(true)
 	cpuMetrics := metric.ComputeCPUMetrics(cpuBefore[0], cpuAfter[0])
 	if platformOpts.enableIowaitSample {
 		cpuMetrics.Iowait = metric.EndIowaitSample()
@@ -122,6 +124,8 @@ func collectGopsutil(opts Options, platformOpts gopsutilOptions) (Result, error)
 		CPUIowaitPercent: cpuMetrics.Iowait,
 		CPUStealPercent:  cpuMetrics.Steal,
 	}
+	metrics.CPUCoreMetrics = coreMetricsFromGopsutil(metric.ComputePerCoreCPUMetrics(perCPUBefore, perCPUAfter))
+	metrics.TemperatureMetrics = temperatureMetricsFromGopsutil(metric.ReadTemperatures())
 
 	if vm, err := mem.VirtualMemory(); err == nil {
 		metrics.MemoryUsage = float64(vm.Used)

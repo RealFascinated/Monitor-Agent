@@ -78,6 +78,10 @@ func collect(opts Options) (Result, error) {
 		metrics.CPUIowaitPercent = iowait
 		metrics.CPUStealPercent = steal
 	}
+	if len(procBefore.PerCPU) > 0 && len(procAfter.PerCPU) > 0 {
+		metrics.CPUCoreMetrics = coreMetricsFromLinux(linux.ComputePerCoreCPU(procBefore.PerCPU, procAfter.PerCPU))
+	}
+	metrics.TemperatureMetrics = temperatureMetricsFromLinux(linux.ReadTemperatures())
 	if hasCgroupCPU {
 		if afterUsage, ok := linux.ReadCPUUsageUsec(cgroup); ok {
 			if usage, ok := linux.ComputeCPUUsage(cgroupCPUBefore, afterUsage, cgroup, elapsed); ok {

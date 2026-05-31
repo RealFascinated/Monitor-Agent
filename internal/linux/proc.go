@@ -33,6 +33,7 @@ type MemoryExtras struct {
 
 type ProcStatSnapshot struct {
 	CPU             CPUStat
+	PerCPU          map[string]CPUStat
 	HasCPU          bool
 	ContextSwitches uint64
 	Interrupts      uint64
@@ -70,32 +71,45 @@ func parseProcStat(r io.Reader) ProcStatSnapshot {
 		if len(fields) == 0 {
 			continue
 		}
-		switch fields[0] {
-		case "cpu":
-			if len(fields) >= 9 {
-				snap.CPU = CPUStat{
-					User:    ParseUint64(fields[1]),
-					Nice:    ParseUint64(fields[2]),
-					System:  ParseUint64(fields[3]),
-					Idle:    ParseUint64(fields[4]),
-					Iowait:  ParseUint64(fields[5]),
-					Irq:     ParseUint64(fields[6]),
-					Softirq: ParseUint64(fields[7]),
-					Steal:   ParseUint64(fields[8]),
-				}
+		switch {
+		case strings.HasPrefix(fields[0], "cpu") && len(fields) >= 9:
+			stat := parseCPUStatFields(fields[1:])
+			if fields[0] == "cpu" {
+				snap.CPU = stat
 				snap.HasCPU = true
+			} else if id := strings.TrimPrefix(fields[0], "cpu"); id != "" {
+				if snap.PerCPU == nil {
+					snap.PerCPU = make(map[string]CPUStat)
+				}
+				snap.PerCPU[id] = stat
 			}
-		case "ctxt":
+		case fields[0] == "ctxt":
 			if len(fields) == 2 {
 				snap.ContextSwitches = ParseUint64(fields[1])
 			}
-		case "intr":
+		case fields[0] == "intr":
 			if len(fields) >= 2 {
 				snap.Interrupts = ParseUint64(fields[1])
 			}
 		}
 	}
 	return snap
+}
+
+func parseCPUStatFields(fields []string) CPUStat {
+	if len(fields) < 8 {
+		return CPUStat{}
+	}
+	return CPUStat{
+		User:    ParseUint64(fields[0]),
+		Nice:    ParseUint64(fields[1]),
+		System:  ParseUint64(fields[2]),
+		Idle:    ParseUint64(fields[3]),
+		Iowait:  ParseUint64(fields[4]),
+		Irq:     ParseUint64(fields[5]),
+		Softirq: ParseUint64(fields[6]),
+		Steal:   ParseUint64(fields[7]),
+	}
 }
 
 func ComputeCPUFromProcStat(before, after CPUStat) (usage, user, system, iowait, steal float64) {

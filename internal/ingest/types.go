@@ -23,6 +23,16 @@ type ServerDetails struct {
 	CPUClockMhz   float64 `json:"cpuClockMhz"`
 }
 
+type CPUCoreMetric struct {
+	CPU          string  `json:"cpu"`
+	UsagePercent float64 `json:"usagePercent"`
+}
+
+type TemperatureMetric struct {
+	Sensor  string  `json:"sensor"`
+	Celsius float64 `json:"celsius"`
+}
+
 type ServerMetrics struct {
 	CPUUsage                 float64 `json:"cpuUsage"`
 	MemoryUsage              float64 `json:"memoryUsage"`
@@ -43,6 +53,8 @@ type ServerMetrics struct {
 	RunningProcesses         int64   `json:"runningProcesses"`
 	ContextSwitchesPerSecond int64   `json:"contextSwitchesPerSecond"`
 	InterruptsPerSecond      int64   `json:"interruptsPerSecond"`
+	CPUCoreMetrics           []CPUCoreMetric      `json:"cpuCoreMetrics,omitempty"`
+	TemperatureMetrics       []TemperatureMetric  `json:"temperatureMetrics,omitempty"`
 }
 
 type ZFSArcMetrics struct {
