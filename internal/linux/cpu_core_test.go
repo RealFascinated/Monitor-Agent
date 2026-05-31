@@ -15,8 +15,8 @@ func TestComputePerCoreCPU(t *testing.T) {
 		"1": {User: 200, System: 100, Idle: 700},
 	}
 	after := map[string]CPUStat{
-		"0": {User: 200, System: 100, Idle: 700},
-		"1": {User: 300, System: 150, Idle: 550},
+		"0": {User: 200, System: 100, Idle: 1000},
+		"1": {User: 300, System: 150, Idle: 850},
 	}
 
 	got := ComputePerCoreCPU(before, after)
