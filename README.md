@@ -82,16 +82,19 @@ Set `enable_gpu: false` or `MONITOR_ENABLE_GPU=false` to disable.
 
 ## Unraid
 
-Install the Docker template on Unraid:
+Install a Docker template on Unraid:
 
 ```bash
+# AMD / Intel GPU, or no discrete NVIDIA GPU
 wget -O /boot/config/plugins/dockerMan/templates-user/monitor-agent.xml \
   https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/master/unraid/monitor-agent.xml
+
+# NVIDIA GPU (requires the Unraid NVIDIA Driver plugin)
+wget -O /boot/config/plugins/dockerMan/templates-user/monitor-agent-nvidia.xml \
+  https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/master/unraid/monitor-agent-nvidia.xml
 ```
 
-Then open **Docker → Add Container**, choose **monitor-agent**, enter your **Ingest Token**, and apply. Defaults mount the host `/proc`, `/sys`, `/dev`, array root at `/host`, and the Docker socket for full metrics on Unraid (including `/mnt/*` shares and ZFS).
-
-For **NVIDIA** GPUs on Unraid, use the `nvidia` image tag and enable GPU passthrough / the NVIDIA driver plugin so `nvidia-smi` is available in the container. AMD and Intel GPUs use the default image and sysfs only.
+Then open **Docker → Add Container**, choose **monitor-agent** or **monitor-agent-nvidia**, enter your **Ingest Token**, and apply. Defaults mount the host `/proc`, `/sys`, `/dev`, array root at `/host`, and the Docker socket for full metrics on Unraid (including `/mnt/*` shares and ZFS).
 
 ## Docker
 

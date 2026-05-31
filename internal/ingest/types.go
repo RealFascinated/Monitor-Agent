@@ -16,7 +16,7 @@ type GPUMetric struct {
 	DeviceID             string  `json:"deviceId"`
 	Name                 string  `json:"name"`
 	Vendor               string  `json:"vendor"`
-	UsagePercent         float64 `json:"usagePercent,omitempty"`
+	UsagePercent         float64 `json:"usagePercent"`
 	MemoryUsedBytes      int64   `json:"memoryUsedBytes,omitempty"`
 	MemoryTotalBytes     int64   `json:"memoryTotalBytes,omitempty"`
 	TemperatureCelsius   float64 `json:"temperatureCelsius,omitempty"`
