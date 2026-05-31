@@ -80,6 +80,7 @@ func collect(opts Options) (Result, error) {
 	}
 
 	metric.BeginIowaitSample()
+	metric.BeginCPUPowerSample()
 
 	sampleStart := time.Now()
 	time.Sleep(sample.Interval)
@@ -183,6 +184,11 @@ func buildWindowsServerMetrics(
 	}
 	if len(snap.Temperatures) == 0 {
 		metrics.TemperatureMetrics = temperatureMetricsFromGopsutil(metric.ReadTemperatures())
+	}
+	if metrics.CPUPowerWatts <= 0 {
+		if watts, ok := metric.EndCPUPowerSample(); ok {
+			metrics.CPUPowerWatts = watts
+		}
 	}
 
 	return metrics

@@ -95,7 +95,7 @@ func ApplyServerSnapshot(metrics *ingest.ServerMetrics, snap ServerSnapshot) {
 	if snap.CPUTotalPercent != nil {
 		metrics.CPUUsage = *snap.CPUTotalPercent
 	}
-	if snap.CPUPowerWatts != nil {
+	if snap.CPUPowerWatts != nil && *snap.CPUPowerWatts > 0 {
 		metrics.CPUPowerWatts = *snap.CPUPowerWatts
 	}
 	if len(snap.Cores) > 0 {

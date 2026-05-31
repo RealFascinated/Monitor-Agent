@@ -101,7 +101,7 @@ internal static class Program
         if (!snapshot.CpuTotalPercent.HasValue && coreLoads.Count > 0)
             snapshot.CpuTotalPercent = coreLoads.Values.Average();
 
-        if (snapshot.CpuPowerWatts.HasValue && snapshot.CpuPowerWatts.Value < 0)
+        if (snapshot.CpuPowerWatts is <= 0)
             snapshot.CpuPowerWatts = null;
 
         foreach (var kv in coreLoads)
@@ -227,6 +227,8 @@ internal static class Program
 
     static bool IsPackagePower(string name)
     {
+        if (name.Contains("GPU", StringComparison.OrdinalIgnoreCase))
+            return false;
         if (name.Contains("Core", StringComparison.OrdinalIgnoreCase))
             return false;
         if (name.Contains("DRAM", StringComparison.OrdinalIgnoreCase))
@@ -243,6 +245,10 @@ internal static class Program
         if (name.Contains("Package", StringComparison.OrdinalIgnoreCase))
             return true;
         if (name.Equals("CPU Power", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (name.Contains("PPT", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (name.Contains("Socket Power", StringComparison.OrdinalIgnoreCase))
             return true;
         return false;
     }
