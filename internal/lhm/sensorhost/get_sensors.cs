@@ -44,6 +44,7 @@ internal sealed class GpuEntry
     public double? TemperatureCelsius;
     public double? PowerWatts;
     public int PowerPriority = -1;
+    public int UsagePriority = -1;
     public int MemoryTotalPriority = -1;
     public int MemoryUsedPriority = -1;
 }
@@ -236,8 +237,7 @@ internal static class Program
             switch (sensor.SensorType)
             {
                 case SensorType.Load:
-                    if (IsGpuUsageLoad(name))
-                        gpu.UsagePercent = PickGpuUsage(gpu.UsagePercent, name, value);
+                    ApplyGpuUsageLoad(gpu, name, value);
                     break;
                 case SensorType.Temperature:
                     if (IsGpuTemperature(name, value))
@@ -254,15 +254,53 @@ internal static class Program
         }
     }
 
-    static double PickGpuUsage(double? current, string name, double value)
+    static void ApplyGpuUsageLoad(GpuEntry gpu, string name, float value)
     {
-        if (!current.HasValue)
-            return value;
+        var priority = GpuUsagePriority(name);
+        if (priority < 0)
+            return;
+
+        if (priority > gpu.UsagePriority)
+        {
+            gpu.UsagePriority = priority;
+            gpu.UsagePercent = value;
+            return;
+        }
+
+        if (priority == gpu.UsagePriority && gpu.UsagePercent is double current && value > current)
+            gpu.UsagePercent = value;
+    }
+
+    // Match Linux nvidia-smi utilization.gpu: one overall busy %, not 3D-only.
+    // Prefer "GPU Core" (NVAPI/ADL). Without it, use the max of main D3D workload engines.
+    static int GpuUsagePriority(string name)
+    {
+        if (name.Contains("Memory", StringComparison.OrdinalIgnoreCase))
+            return -1;
+        if (name.Contains("Bus", StringComparison.OrdinalIgnoreCase))
+            return -1;
+        if (name.Equals("GPU Core", StringComparison.OrdinalIgnoreCase))
+            return 100;
+        if (name.Equals("GPU", StringComparison.OrdinalIgnoreCase))
+            return 20;
+        if (name.Contains("D3D", StringComparison.OrdinalIgnoreCase) && IsD3DWorkloadEngine(name))
+            return 50;
+        return -1;
+    }
+
+    static bool IsD3DWorkloadEngine(string name)
+    {
         if (name.Contains("D3D 3D", StringComparison.OrdinalIgnoreCase))
-            return value;
-        if (name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase))
-            return value;
-        return current.Value;
+            return true;
+        if (name.Contains("Compute", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (name.Contains("Encode", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (name.Contains("Decode", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (name.Contains("Video Processing", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
     }
 
     static double PickGpuTemperature(double? current, string name, double value)
@@ -275,25 +313,6 @@ internal static class Program
             !name.Contains("Hot Spot", StringComparison.OrdinalIgnoreCase))
             return value;
         return Math.Max(current.Value, value);
-    }
-
-    static bool IsGpuUsageLoad(string name)
-    {
-        if (name.Contains("Memory", StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (name.Contains("Copy", StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (name.Contains("Bus", StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (name.Contains("Video", StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (name.Contains("D3D 3D", StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (name.Contains("3D", StringComparison.OrdinalIgnoreCase))
-            return true;
-        return name.Equals("GPU", StringComparison.OrdinalIgnoreCase);
     }
 
     static bool IsGpuTemperature(string name, float celsius) =>
