@@ -17,11 +17,6 @@ type releaseAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
-type release struct {
-	TagName string         `json:"tag_name"`
-	Assets  []releaseAsset `json:"assets"`
-}
-
 func (r release) findAsset(name string) (releaseAsset, error) {
 	for _, asset := range r.Assets {
 		if asset.Name == name {
@@ -59,13 +54,7 @@ func fetchLatestAgentRelease() (release, error) {
 		return release{}, err
 	}
 
-	for _, item := range releases {
-		if strings.HasPrefix(item.TagName, TagPrefix) {
-			return item, nil
-		}
-	}
-
-	return release{}, fmt.Errorf("no %s releases found", TagPrefix)
+	return latestAgentRelease(releases)
 }
 
 func downloadFile(url, destPath string) error {

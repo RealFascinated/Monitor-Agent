@@ -141,12 +141,19 @@ function Escape-YamlString([string]$Value) {
 
 function Get-LatestVersion {
     $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$GitHubRepo/releases?per_page=100"
-    foreach ($release in $releases) {
+    $versions = foreach ($release in $releases) {
+        if ($release.draft -or $release.prerelease) {
+            continue
+        }
         if ($release.tag_name -match '^agent/v(.+)$') {
-            return $Matches[1]
+            $Matches[1]
         }
     }
-    throw 'Could not determine latest agent release version.'
+    $latest = $versions | Sort-Object { [version]$_ } -Descending | Select-Object -First 1
+    if (-not $latest) {
+        throw 'Could not determine latest agent release version.'
+    }
+    return $latest
 }
 
 function Install-AgentBinary([string]$Version, [string]$Destination) {

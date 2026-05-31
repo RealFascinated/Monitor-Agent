@@ -81,7 +81,26 @@ escape_yaml_string() {
 fetch_latest_version() {
   local releases tag
   releases="$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100")"
-  tag="$(printf '%s\n' "$releases" | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"agent/v[^"]+"' | head -1 | sed -E 's/.*"agent\/v([^"]+)".*/\1/')"
+  [[ -n "$releases" ]] || die "could not fetch releases"
+
+  if command -v jq >/dev/null 2>&1; then
+    tag="$(
+      printf '%s' "$releases" | jq -r '
+        [.[] | select(.draft == false and .prerelease == false)
+         | .tag_name | select(startswith("agent/v")) | sub("^agent/v"; "")]
+        | .[]
+      ' | sort -V | tail -n1
+    )"
+  else
+    tag="$(
+      printf '%s\n' "$releases" \
+        | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"agent/v[^"]+"' \
+        | sed -E 's/.*"agent\/v([^"]+)".*/\1/' \
+        | sort -V \
+        | tail -n1
+    )"
+  fi
+
   [[ -n "$tag" ]] || die "could not determine latest agent release version"
   echo "$tag"
 }
