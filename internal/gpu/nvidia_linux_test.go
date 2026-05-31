@@ -1,0 +1,42 @@
+//go:build linux
+
+package gpu
+
+import (
+	"testing"
+
+	"fascinated.cc/monitor/agent/internal/ingest"
+)
+
+func TestParseNVIDIALine(t *testing.T) {
+	metric, ok := parseNVIDIALine(`NVIDIA GeForce RTX 4090, GPU-11111111-2222-3333-4444-555555555555, 12, 3, 45, 1024, 24576, 125.50`)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if metric.Vendor != "nvidia" {
+		t.Fatalf("identity: %+v", metric)
+	}
+	wantID := ingest.HashDeviceID("GPU-11111111-2222-3333-4444-555555555555")
+	if metric.DeviceID != wantID {
+		t.Fatalf("device id: got %q want %q", metric.DeviceID, wantID)
+	}
+	if metric.UsagePercent != 12 || metric.MemoryUsedBytes != 1024*1024*1024 {
+		t.Fatalf("usage/memory: %+v", metric)
+	}
+	if metric.TemperatureCelsius != 45 || metric.PowerWatts != 125.5 {
+		t.Fatalf("temp/power: %+v", metric)
+	}
+}
+
+func TestParseNVIDIALineQuotedName(t *testing.T) {
+	metric, ok := parseNVIDIALine(`"GeForce RTX, 3080", GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee, 0, 0, 40, 512, 10240, [N/A]`)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if metric.Name != "GeForce RTX, 3080" {
+		t.Fatalf("name: %q", metric.Name)
+	}
+	if metric.PowerWatts != 0 {
+		t.Fatalf("power should be omitted: %v", metric.PowerWatts)
+	}
+}

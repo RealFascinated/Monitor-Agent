@@ -13,6 +13,18 @@ type serverMetricsJSON struct {
 	Cores           []coreMetricJSON    `json:"cores"`
 	Memory          memoryMetricJSON    `json:"memory"`
 	Temperatures    []temperatureJSON   `json:"temperatures"`
+	GPUs            []gpuMetricJSON     `json:"gpus"`
+}
+
+type gpuMetricJSON struct {
+	DeviceID           string   `json:"deviceId"`
+	Name               string   `json:"name"`
+	Vendor             string   `json:"vendor"`
+	UsagePercent       *float64 `json:"usagePercent"`
+	MemoryUsedBytes    *int64   `json:"memoryUsedBytes"`
+	MemoryTotalBytes   *int64   `json:"memoryTotalBytes"`
+	TemperatureCelsius *float64 `json:"temperatureCelsius"`
+	PowerWatts         *float64 `json:"powerWatts"`
 }
 
 type coreMetricJSON struct {
@@ -38,6 +50,7 @@ type ServerSnapshot struct {
 	Cores           []ingest.CPUCoreMetric
 	Memory          MemorySnapshot
 	Temperatures    []ingest.TemperatureMetric
+	GPUs            []ingest.GPUMetric
 }
 
 // MemorySnapshot holds byte counts from LHM when available.
@@ -85,6 +98,32 @@ func snapshotFromJSON(raw serverMetricsJSON) ServerSnapshot {
 				Sensor:  t.Sensor,
 				Celsius: t.Celsius,
 			}
+		}
+	}
+	if len(raw.GPUs) > 0 {
+		snap.GPUs = make([]ingest.GPUMetric, 0, len(raw.GPUs))
+		for _, g := range raw.GPUs {
+			metric := ingest.GPUMetric{
+				DeviceID: ingest.HashDeviceID(g.DeviceID),
+				Name:     g.Name,
+				Vendor:   g.Vendor,
+			}
+			if g.UsagePercent != nil {
+				metric.UsagePercent = *g.UsagePercent
+			}
+			if g.MemoryUsedBytes != nil {
+				metric.MemoryUsedBytes = *g.MemoryUsedBytes
+			}
+			if g.MemoryTotalBytes != nil {
+				metric.MemoryTotalBytes = *g.MemoryTotalBytes
+			}
+			if g.TemperatureCelsius != nil {
+				metric.TemperatureCelsius = *g.TemperatureCelsius
+			}
+			if g.PowerWatts != nil {
+				metric.PowerWatts = *g.PowerWatts
+			}
+			snap.GPUs = append(snap.GPUs, metric)
 		}
 	}
 	return snap

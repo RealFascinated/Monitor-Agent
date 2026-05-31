@@ -15,9 +15,14 @@ RUN CGO_ENABLED=0 go build \
     -o /monitor-agent \
     ./cmd/main.go
 
+FROM nvidia/cuda:12.6.0-base-ubuntu24.04 AS nvidia
+
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates docker-cli util-linux zfs
+# gcompat: run glibc nvidia-smi; use --gpus all so the NVIDIA Container Toolkit can inject host driver libs.
+RUN apk add --no-cache ca-certificates docker-cli util-linux zfs gcompat
+
+COPY --from=nvidia /usr/bin/nvidia-smi /usr/bin/nvidia-smi
 
 COPY --from=build /monitor-agent /usr/local/bin/monitor-agent
 COPY config-example.yml /etc/monitor-agent/config-example.yml

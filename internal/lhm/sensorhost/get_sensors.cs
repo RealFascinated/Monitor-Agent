@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using LibreHardwareMonitor.Hardware;
+using LibreHardwareMonitor.Hardware.Gpu;
 
 namespace MonitorAgent.Lhm;
 
@@ -29,6 +30,20 @@ internal sealed class ServerMetricsSnapshot
     public List<CoreEntry> Cores = new();
     public MemoryEntry Memory = new();
     public List<TemperatureEntry> Temperatures = new();
+    public List<GpuEntry> Gpus = new();
+}
+
+internal sealed class GpuEntry
+{
+    public string DeviceId = "";
+    public string Name = "";
+    public string Vendor = "";
+    public double? UsagePercent;
+    public long? MemoryUsedBytes;
+    public long? MemoryTotalBytes;
+    public double? TemperatureCelsius;
+    public double? PowerWatts;
+    public int PowerPriority = -1;
 }
 
 internal sealed class CoreEntry
@@ -118,6 +133,22 @@ internal static class Program
 
     static void CollectHardware(IHardware hardware, ServerMetricsSnapshot snapshot, SortedDictionary<int, double> coreLoads)
     {
+        if (IsGpuHardware(hardware.HardwareType))
+        {
+            var gpu = new GpuEntry
+            {
+                DeviceId = GpuDeviceId(hardware),
+                Name = string.IsNullOrWhiteSpace(hardware.Name) ? "GPU" : hardware.Name,
+                Vendor = GpuVendor(hardware.HardwareType),
+            };
+            CollectGpuSensors(hardware, gpu);
+            foreach (var sub in hardware.SubHardware)
+                CollectGpuSensors(sub, gpu);
+            if (GpuHasData(gpu))
+                snapshot.Gpus.Add(gpu);
+            return;
+        }
+
         if (hardware.HardwareType == HardwareType.Memory)
             CollectMemory(hardware, snapshot.Memory);
 
@@ -159,6 +190,166 @@ internal static class Program
             if (IsTotalCpuLoad(sensor.Name))
                 snapshot.CpuTotalPercent = value;
         }
+    }
+
+    static bool IsGpuHardware(HardwareType type) =>
+        type is HardwareType.GpuNvidia or HardwareType.GpuAmd or HardwareType.GpuIntel;
+
+    static string GpuDeviceId(IHardware hardware)
+    {
+        if (hardware is GenericGpu genericGpu)
+        {
+            var deviceId = genericGpu.DeviceId;
+            if (!string.IsNullOrWhiteSpace(deviceId))
+                return deviceId.Trim();
+        }
+        return hardware.Identifier.ToString();
+    }
+
+    static string GpuVendor(HardwareType type) => type switch
+    {
+        HardwareType.GpuNvidia => "nvidia",
+        HardwareType.GpuAmd => "amd",
+        HardwareType.GpuIntel => "intel",
+        _ => "unknown",
+    };
+
+    static bool GpuHasData(GpuEntry gpu) =>
+        gpu.UsagePercent.HasValue ||
+        gpu.MemoryUsedBytes.HasValue ||
+        gpu.MemoryTotalBytes.HasValue ||
+        gpu.TemperatureCelsius.HasValue ||
+        (gpu.PowerWatts.HasValue && gpu.PowerWatts > 0);
+
+    static void CollectGpuSensors(IHardware hardware, GpuEntry gpu)
+    {
+        foreach (var sensor in hardware.Sensors)
+        {
+            if (!sensor.Value.HasValue)
+                continue;
+
+            var value = sensor.Value.Value;
+            var name = sensor.Name;
+
+            switch (sensor.SensorType)
+            {
+                case SensorType.Load:
+                    if (IsGpuUsageLoad(name))
+                        gpu.UsagePercent = PickGpuUsage(gpu.UsagePercent, name, value);
+                    break;
+                case SensorType.Temperature:
+                    if (IsGpuTemperature(name, value))
+                        gpu.TemperatureCelsius = PickGpuTemperature(gpu.TemperatureCelsius, name, value);
+                    break;
+                case SensorType.Power:
+                    ApplyGpuPower(gpu, name, value);
+                    break;
+                case SensorType.Data:
+                case SensorType.SmallData:
+                    ApplyGpuMemorySensor(gpu, name, sensor, value);
+                    break;
+            }
+        }
+    }
+
+    static double PickGpuUsage(double? current, string name, double value)
+    {
+        if (!current.HasValue)
+            return value;
+        if (name.Contains("D3D 3D", StringComparison.OrdinalIgnoreCase))
+            return value;
+        if (name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase))
+            return value;
+        return current.Value;
+    }
+
+    static double PickGpuTemperature(double? current, string name, double value)
+    {
+        if (!current.HasValue)
+            return value;
+        if (name.Contains("Hot Spot", StringComparison.OrdinalIgnoreCase))
+            return value;
+        if (name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("Hot Spot", StringComparison.OrdinalIgnoreCase))
+            return value;
+        return Math.Max(current.Value, value);
+    }
+
+    static bool IsGpuUsageLoad(string name)
+    {
+        if (name.Contains("Memory", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Contains("Copy", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Contains("Bus", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Contains("Video", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Contains("D3D 3D", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (name.Contains("3D", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return name.Equals("GPU", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool IsGpuTemperature(string name, float celsius) =>
+        IsReportedTemperature(name, celsius) &&
+        (name.Contains("GPU", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("Hot Spot", StringComparison.OrdinalIgnoreCase) ||
+         name.Contains("Graphics", StringComparison.OrdinalIgnoreCase));
+
+    static void ApplyGpuPower(GpuEntry gpu, string name, float value)
+    {
+        if (value <= 0)
+            return;
+        if (name.Contains("CPU", StringComparison.OrdinalIgnoreCase))
+            return;
+        if (name.Contains("Pin ", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var priority = GpuPowerPriority(name);
+        if (priority > gpu.PowerPriority)
+        {
+            gpu.PowerPriority = priority;
+            gpu.PowerWatts = value;
+        }
+    }
+
+    static int GpuPowerPriority(string name)
+    {
+        if (name.Contains("Package", StringComparison.OrdinalIgnoreCase))
+            return 100;
+        if (name.Contains("Board", StringComparison.OrdinalIgnoreCase))
+            return 90;
+        if (name.Contains("PPT", StringComparison.OrdinalIgnoreCase))
+            return 85;
+        if (name.Contains("Connector", StringComparison.OrdinalIgnoreCase))
+            return 80;
+        if (name.Contains("Power", StringComparison.OrdinalIgnoreCase))
+            return 70;
+        if (name.Contains("Socket", StringComparison.OrdinalIgnoreCase))
+            return 60;
+        if (name.Contains("SoC", StringComparison.OrdinalIgnoreCase))
+            return 50;
+        if (name.Contains("Core", StringComparison.OrdinalIgnoreCase))
+            return 40;
+        return 30;
+    }
+
+    static void ApplyGpuMemorySensor(GpuEntry gpu, string name, ISensor sensor, float value)
+    {
+        var bytes = MemoryBytes(sensor, value);
+        if (bytes == null)
+            return;
+
+        if (name.Contains("Used", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("Total", StringComparison.OrdinalIgnoreCase))
+            gpu.MemoryUsedBytes = bytes;
+        else if (name.Contains("Total", StringComparison.OrdinalIgnoreCase) ||
+                 name.Equals("GPU Memory", StringComparison.OrdinalIgnoreCase))
+            gpu.MemoryTotalBytes = bytes;
     }
 
     static void CollectMemory(IHardware hardware, MemoryEntry memory)
@@ -319,6 +510,31 @@ internal static class Program
             AppendString(sb, t.Sensor);
             sb.Append(",\"celsius\":");
             AppendDouble(sb, t.Celsius);
+            sb.Append('}');
+        }
+        sb.Append(']');
+
+        sb.Append(",\"gpus\":[");
+        for (var i = 0; i < s.Gpus.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            var g = s.Gpus[i];
+            sb.Append("{\"name\":");
+            AppendString(sb, g.Name);
+            sb.Append(",\"vendor\":");
+            AppendString(sb, g.Vendor);
+            sb.Append(",\"deviceId\":");
+            AppendString(sb, g.DeviceId);
+            sb.Append(",\"usagePercent\":");
+            AppendNullableDouble(sb, g.UsagePercent);
+            sb.Append(",\"memoryUsedBytes\":");
+            AppendNullableLong(sb, g.MemoryUsedBytes);
+            sb.Append(",\"memoryTotalBytes\":");
+            AppendNullableLong(sb, g.MemoryTotalBytes);
+            sb.Append(",\"temperatureCelsius\":");
+            AppendNullableDouble(sb, g.TemperatureCelsius);
+            sb.Append(",\"powerWatts\":");
+            AppendNullableDouble(sb, g.PowerWatts);
             sb.Append('}');
         }
         sb.Append("]}");

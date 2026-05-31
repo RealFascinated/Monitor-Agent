@@ -146,6 +146,7 @@ func (a *Agent) pushOnce() {
 	sample, err := collector.Collect(collector.Options{
 		HasZFS:       a.HasZFS,
 		EnableDocker: config.EnableDocker,
+		EnableGPU:    config.EnableGPU,
 	})
 	if err != nil {
 		slog.Error("collect metrics", "err", err)
@@ -161,6 +162,7 @@ func (a *Agent) pushOnce() {
 		DiskMetrics:      sample.DiskMetrics,
 		ZfsPoolMetrics:   sample.ZfsPoolMetrics,
 		DockerContainers: sample.DockerContainers,
+		GPUMetrics:       sample.GPUMetrics,
 	}
 
 	if config.PrintMode {

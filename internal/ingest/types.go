@@ -9,6 +9,18 @@ type Data struct {
 	ZfsArcMetrics    *ZFSArcMetrics          `json:"zfsArcMetrics,omitempty"`
 	ZfsPoolMetrics   []ZfsPoolMetric         `json:"zfsPoolMetrics,omitempty"`
 	DockerContainers []DockerContainerMetric `json:"dockerContainers,omitempty"`
+	GPUMetrics       []GPUMetric             `json:"gpuMetrics,omitempty"`
+}
+
+type GPUMetric struct {
+	DeviceID             string  `json:"deviceId"`
+	Name                 string  `json:"name"`
+	Vendor               string  `json:"vendor"`
+	UsagePercent         float64 `json:"usagePercent,omitempty"`
+	MemoryUsedBytes      int64   `json:"memoryUsedBytes,omitempty"`
+	MemoryTotalBytes     int64   `json:"memoryTotalBytes,omitempty"`
+	TemperatureCelsius   float64 `json:"temperatureCelsius,omitempty"`
+	PowerWatts           float64 `json:"powerWatts,omitempty"`
 }
 
 type ServerDetails struct {

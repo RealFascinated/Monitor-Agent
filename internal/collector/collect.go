@@ -11,6 +11,7 @@ type Result struct {
 	ZfsArcMetrics    *ingest.ZFSArcMetrics
 	ZfsPoolMetrics   []ingest.ZfsPoolMetric
 	DockerContainers []ingest.DockerContainerMetric
+	GPUMetrics       []ingest.GPUMetric
 }
 
 func Collect(opts Options) (Result, error) {

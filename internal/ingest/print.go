@@ -12,7 +12,7 @@ func Print(data Data) error {
 }
 
 func printTo(w io.Writer, data Data) error {
-	body, err := json.Marshal(data)
+	body, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal ingest data: %w", err)
 	}

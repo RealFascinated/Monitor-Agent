@@ -112,11 +112,14 @@ func collect(opts Options) (Result, error) {
 		}
 	}
 
-	metrics := buildWindowsServerMetrics(
+	metrics, gpuMetrics := buildWindowsServerMetrics(
 		cpuBefore[0], cpuAfter[0],
 		perCPUBefore, perCPUAfter,
 		iowait,
 	)
+	if opts.EnableGPU {
+		result.GPUMetrics = gpuMetrics
+	}
 
 	metrics.ProcessCount, metrics.RunningProcesses = counters.ProcessStats()
 
@@ -152,7 +155,7 @@ func buildWindowsServerMetrics(
 	cpuBefore, cpuAfter cpu.TimesStat,
 	perCPUBefore, perCPUAfter []cpu.TimesStat,
 	iowait float64,
-) ingest.ServerMetrics {
+) (ingest.ServerMetrics, []ingest.GPUMetric) {
 	breakdown := cpupkg.ComputeCPUMetrics(cpuBefore, cpuAfter)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -161,10 +164,11 @@ func buildWindowsServerMetrics(
 	snap, err := lhm.GetServerMetrics(ctx)
 	if err != nil {
 		warnLHMFallback(err)
-		return serverMetricsFromGopsutil(cpuBefore, cpuAfter, perCPUBefore, perCPUAfter, iowait)
+		return serverMetricsFromGopsutil(cpuBefore, cpuAfter, perCPUBefore, perCPUAfter, iowait), nil
 	}
 
 	metrics := serverMetricsFromLHM(snap)
+	gpuMetrics := snap.GPUs
 	metrics.CPUUserPercent = breakdown.User
 	metrics.CPUSystemPercent = breakdown.System
 	metrics.CPUStealPercent = breakdown.Steal
@@ -186,7 +190,7 @@ func buildWindowsServerMetrics(
 		}
 	}
 
-	return metrics
+	return metrics, gpuMetrics
 }
 
 func applyGopsutilMemoryExtras(metrics *ingest.ServerMetrics, memoryComplete bool) {

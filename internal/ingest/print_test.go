@@ -29,6 +29,9 @@ func TestPrint(t *testing.T) {
 	if decoded.ServerDetails.Ip != "127.0.0.1" {
 		t.Fatalf("ip: got %q", decoded.ServerDetails.Ip)
 	}
+	if !bytes.Contains(buf.Bytes(), []byte("\n  ")) {
+		t.Fatalf("expected indented JSON, got %q", buf.Bytes())
+	}
 }
 
 func TestLoadPrintConfigNoToken(t *testing.T) {

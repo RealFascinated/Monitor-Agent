@@ -9,6 +9,7 @@ import (
 	"fascinated.cc/monitor/agent/internal/delta"
 	"fascinated.cc/monitor/agent/internal/disk"
 	"fascinated.cc/monitor/agent/internal/docker"
+	gpupkg "fascinated.cc/monitor/agent/internal/gpu"
 	"fascinated.cc/monitor/agent/internal/ingest"
 	"fascinated.cc/monitor/agent/internal/iostats"
 	"fascinated.cc/monitor/agent/internal/linux"
@@ -178,6 +179,10 @@ func collect(opts Options) (Result, error) {
 
 	if dockerCh != nil {
 		result.DockerContainers = <-dockerCh
+	}
+
+	if opts.EnableGPU {
+		result.GPUMetrics = gpupkg.Collect()
 	}
 
 	result.ServerMetrics = metrics

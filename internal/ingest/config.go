@@ -26,6 +26,7 @@ type fileConfig struct {
 	ApiEndpoint  string `yaml:"api_endpoint"`
 	PushSchedule string `yaml:"push_schedule"`
 	EnableDocker *bool  `yaml:"enable_docker"`
+	EnableGPU    *bool  `yaml:"enable_gpu"`
 	PrintMode    *bool  `yaml:"print_mode"`
 }
 
@@ -34,6 +35,7 @@ type Config struct {
 	ApiEndpoint  string
 	PushSchedule string
 	EnableDocker bool
+	EnableGPU    bool
 	PrintMode    bool
 }
 
@@ -70,9 +72,13 @@ func loadConfig(forcePrint bool) (*Config, error) {
 		ApiEndpoint:  strings.TrimSpace(raw.ApiEndpoint),
 		PushSchedule: schedule,
 		EnableDocker: true,
+		EnableGPU:    true,
 	}
 	if raw.EnableDocker != nil {
 		config.EnableDocker = *raw.EnableDocker
+	}
+	if raw.EnableGPU != nil {
+		config.EnableGPU = *raw.EnableGPU
 	}
 	if forcePrint || (raw.PrintMode != nil && *raw.PrintMode) {
 		config.PrintMode = true
