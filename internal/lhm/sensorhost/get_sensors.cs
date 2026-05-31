@@ -44,6 +44,8 @@ internal sealed class GpuEntry
     public double? TemperatureCelsius;
     public double? PowerWatts;
     public int PowerPriority = -1;
+    public int MemoryTotalPriority = -1;
+    public int MemoryUsedPriority = -1;
 }
 
 internal sealed class CoreEntry
@@ -344,12 +346,53 @@ internal static class Program
         if (bytes == null)
             return;
 
+        var usedPriority = GpuMemoryUsedPriority(name);
+        if (usedPriority > gpu.MemoryUsedPriority)
+        {
+            gpu.MemoryUsedPriority = usedPriority;
+            gpu.MemoryUsedBytes = bytes;
+            return;
+        }
+
+        var totalPriority = GpuMemoryTotalPriority(name);
+        if (totalPriority > gpu.MemoryTotalPriority)
+        {
+            gpu.MemoryTotalPriority = totalPriority;
+            gpu.MemoryTotalBytes = bytes;
+        }
+    }
+
+    // AMD (and NVIDIA) expose D3D dedicated VRAM separately from the Windows shared GPU
+    // memory pool (often half of system RAM, e.g. 32 GB on a 64 GB machine). Prefer VRAM.
+    static int GpuMemoryUsedPriority(string name)
+    {
+        if (name.Contains("Shared", StringComparison.OrdinalIgnoreCase))
+            return -1;
+        if (name.Contains("D3D Dedicated", StringComparison.OrdinalIgnoreCase) &&
+            name.Contains("Used", StringComparison.OrdinalIgnoreCase))
+            return 100;
+        if (name.Equals("GPU Memory Used", StringComparison.OrdinalIgnoreCase))
+            return 90;
         if (name.Contains("Used", StringComparison.OrdinalIgnoreCase) &&
             !name.Contains("Total", StringComparison.OrdinalIgnoreCase))
-            gpu.MemoryUsedBytes = bytes;
-        else if (name.Contains("Total", StringComparison.OrdinalIgnoreCase) ||
-                 name.Equals("GPU Memory", StringComparison.OrdinalIgnoreCase))
-            gpu.MemoryTotalBytes = bytes;
+            return 50;
+        return -1;
+    }
+
+    static int GpuMemoryTotalPriority(string name)
+    {
+        if (name.Contains("Shared", StringComparison.OrdinalIgnoreCase))
+            return -1;
+        if (name.Contains("D3D Dedicated", StringComparison.OrdinalIgnoreCase) &&
+            name.Contains("Total", StringComparison.OrdinalIgnoreCase))
+            return 100;
+        if (name.Equals("GPU Memory Total", StringComparison.OrdinalIgnoreCase))
+            return 90;
+        if (name.Contains("Total", StringComparison.OrdinalIgnoreCase))
+            return 50;
+        if (name.Equals("GPU Memory", StringComparison.OrdinalIgnoreCase))
+            return 40;
+        return -1;
     }
 
     static void CollectMemory(IHardware hardware, MemoryEntry memory)
