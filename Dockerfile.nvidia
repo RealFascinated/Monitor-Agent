@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-# Default image: small Alpine build for AMD/Intel GPU (sysfs) and hosts without NVIDIA.
+# NVIDIA variant: Ubuntu + CUDA base (glibc). Use with the NVIDIA Container Toolkit and
+# --gpus all so nvidia-smi and driver libraries are injected from the host.
 
 FROM golang:1.25-alpine AS build
 
@@ -16,9 +17,14 @@ RUN CGO_ENABLED=0 go build \
     -o /monitor-agent \
     ./cmd/main.go
 
-FROM alpine:3.21
+FROM nvidia/cuda:12.6.0-base-ubuntu24.04
 
-RUN apk add --no-cache ca-certificates docker-cli util-linux zfs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    docker.io \
+    util-linux \
+    zfsutils-linux \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /monitor-agent /usr/local/bin/monitor-agent
 COPY config-example.yml /etc/monitor-agent/config-example.yml

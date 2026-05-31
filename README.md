@@ -73,7 +73,7 @@ Each GPU is reported in `gpuMetrics` with a stable `deviceId` (16-character hex 
 | Platform | Source |
 | --- | --- |
 | **Windows** | LibreHardwareMonitor (NVIDIA, AMD, Intel) |
-| **Linux — NVIDIA** | `nvidia-smi` (included in the Docker image) |
+| **Linux — NVIDIA** | `nvidia-smi` (host binary via NVIDIA Container Toolkit in the `:nvidia` Docker image) |
 | **Linux — AMD / Intel** | DRM sysfs (`amdgpu`, `i915`, `xe`) |
 
 Set `enable_gpu: false` or `MONITOR_ENABLE_GPU=false` to disable.
@@ -89,7 +89,7 @@ wget -O /boot/config/plugins/dockerMan/templates-user/monitor-agent.xml \
 
 Then open **Docker → Add Container**, choose **monitor-agent**, enter your **Ingest Token**, and apply. Defaults mount the host `/proc`, `/sys`, `/dev`, array root at `/host`, and the Docker socket for full metrics on Unraid (including `/mnt/*` shares and ZFS).
 
-For **NVIDIA** GPUs on Unraid, add GPU support in the container (e.g. set the container to use the NVIDIA driver / pass through GPUs) so `nvidia-smi` can reach the host driver. AMD and Intel GPUs use sysfs and do not need `nvidia-smi`.
+For **NVIDIA** GPUs on Unraid, use the `nvidia` image tag and enable GPU passthrough / the NVIDIA driver plugin so `nvidia-smi` is available in the container. AMD and Intel GPUs use the default image and sysfs only.
 
 ## Docker
 
@@ -97,11 +97,21 @@ Images are published to GitHub Container Registry on each `agent/v*` release tag
 
 `ghcr.io/realfascinated/monitor-agent`
 
-Pull a versioned tag (for example `2.0.1`), `latest` (releases), or `master` (every push to the `master` branch).
+| Image | Dockerfile | Use when |
+| --- | --- | --- |
+| `:latest`, `:master`, `:VERSION` | `Dockerfile` | Default — small Alpine image; **AMD and Intel** GPU via sysfs |
+| `:nvidia`, `:nvidia-master`, `:VERSION-nvidia` | `Dockerfile.nvidia` | **NVIDIA** GPU hosts with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) |
 
-The image bundles `nvidia-smi` (from the CUDA runtime image at build time) and `gcompat` (glibc compatibility on Alpine). **NVIDIA** hosts should install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) and pass GPUs into the container (`gpus: all` below, or `docker run --gpus all`) so driver libraries match the host. **AMD and Intel** GPUs are collected via `/sys` mounts and do not require `gpus: all`.
+The default image does not include `nvidia-smi`. The NVIDIA image uses an Ubuntu + CUDA base (glibc); run with `gpus: all` so the toolkit injects `nvidia-smi` and host-matched driver libraries.
 
-### Example `docker-compose.yml`
+Build locally:
+
+```bash
+docker build -t monitor-agent .
+docker build -f Dockerfile.nvidia -t monitor-agent:nvidia .
+```
+
+### Example `docker-compose.yml` (default — AMD / Intel / no discrete NVIDIA)
 
 ```yaml
 services:
@@ -127,10 +137,19 @@ services:
       - /dev:/dev:ro
       - /etc/os-release:/etc/os-release:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    gpus: all
 ```
 
-Omit `gpus: all` if you have no NVIDIA GPU (or no Container Toolkit); AMD/Intel metrics still work with the sysfs mounts above.
+### Example `docker-compose.yml` (NVIDIA)
+
+Same as above, but use the NVIDIA image and pass GPUs:
+
+```yaml
+services:
+  monitor-agent:
+    image: ghcr.io/realfascinated/monitor-agent:nvidia
+    gpus: all
+    # ... same privileged, pid, network_mode, environment, and volumes as above
+```
 
 Alternatively, mount a config file instead of using env vars:
 
@@ -143,4 +162,4 @@ Alternatively, mount a config file instead of using env vars:
 
 ## Releases
 
-Tagged releases use the prefix `agent/vMAJOR.MINOR.PATCH` (for example `agent/v2.0.1`). Pushing a tag builds GitHub release binaries and publishes the multi-arch Docker image to GHCR.
+Tagged releases use the prefix `agent/vMAJOR.MINOR.PATCH` (for example `agent/v2.0.1`). Pushing a tag builds GitHub release binaries and publishes both Docker images (default and `-nvidia`) to GHCR.
