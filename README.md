@@ -99,7 +99,7 @@ Images are published to GitHub Container Registry on each `agent/v*` release tag
 
 Pull a versioned tag (for example `2.0.1`), `latest` (releases), or `master` (every push to the `master` branch).
 
-The image includes `nvidia-smi` and `gcompat` (glibc compatibility on Alpine). **NVIDIA** hosts should install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) and pass GPUs into the container (`gpus: all` below, or `docker run --gpus all`) so driver libraries match the host. **AMD and Intel** GPUs are collected via `/sys` mounts and do not require `gpus: all`.
+The image bundles `nvidia-smi` (from the CUDA runtime image at build time) and `gcompat` (glibc compatibility on Alpine). **NVIDIA** hosts should install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) and pass GPUs into the container (`gpus: all` below, or `docker run --gpus all`) so driver libraries match the host. **AMD and Intel** GPUs are collected via `/sys` mounts and do not require `gpus: all`.
 
 ### Example `docker-compose.yml`
 
