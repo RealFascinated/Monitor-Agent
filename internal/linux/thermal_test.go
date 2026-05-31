@@ -75,6 +75,31 @@ func TestDedupeTemperatureReadings(t *testing.T) {
 	}
 }
 
+func TestDedupeKeepsDistinctHwmonSensors(t *testing.T) {
+	readings := dedupeTemperatureReadings([]TemperatureReading{
+		{Sensor: "k10temp/Tctl", Celsius: 68},
+		{Sensor: "k10temp/Composite", Celsius: 67.5},
+		{Sensor: "nvme0/Sensor 1", Celsius: 51},
+		{Sensor: "nvme1/Sensor 1", Celsius: 50.5},
+		{Sensor: "x86_pkg_temp", Celsius: 68.2},
+	})
+	if len(readings) != 4 {
+		t.Fatalf("deduped = %+v, want 4 (drop x86_pkg_temp only)", readings)
+	}
+	for _, want := range []string{"k10temp/Tctl", "k10temp/Composite", "nvme0/Sensor 1", "nvme1/Sensor 1"} {
+		found := false
+		for _, r := range readings {
+			if r.Sensor == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing %q in %+v", want, readings)
+		}
+	}
+}
+
 func TestIsReportedTemperatureLabel(t *testing.T) {
 	if isReportedTemperatureLabel("Critical Temperature") {
 		t.Fatal("expected false for critical threshold label")
@@ -89,6 +114,10 @@ func TestDeviceIDFromPath(t *testing.T) {
 	path = "/sys/devices/pci0000:00/0000:06:00.0/nvme/nvme1"
 	if got := deviceIDFromPath(path); got != "nvme1" {
 		t.Fatalf("nvme id = %q, want nvme1", got)
+	}
+	path = "/sys/devices/pci0000:00/0000:05:00.0/nvme/nvme0/device/hwmon/hwmon3"
+	if got := deviceIDFromPath(path); got != "nvme0" {
+		t.Fatalf("nvme hwmon path id = %q, want nvme0", got)
 	}
 }
 
@@ -121,23 +150,29 @@ func TestReadHwmonNVMeTemperatures(t *testing.T) {
 func linkNVMeHwmon(t *testing.T, root, hwmonName, nvmeName, label string, milli int64) error {
 	t.Helper()
 	device := filepath.Join(root, "sys", "devices", "pci0000", "0000:05:00.0", "nvme", nvmeName)
-	hwmon := filepath.Join(root, "sys", "class", "hwmon", hwmonName)
-	if err := os.MkdirAll(device, 0o755); err != nil {
-		return err
+	classNVMe := filepath.Join(root, "sys", "class", "nvme", nvmeName)
+	hwmonClass := filepath.Join(root, "sys", "class", "hwmon", hwmonName)
+	hwmonOnNVMe := filepath.Join(classNVMe, "device", "hwmon", hwmonName)
+
+	for _, dir := range []string{device, classNVMe, hwmonClass, hwmonOnNVMe} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
 	}
-	if err := os.MkdirAll(hwmon, 0o755); err != nil {
-		return err
+	for _, hwmon := range []string{hwmonClass, hwmonOnNVMe} {
+		relDevice, err := filepath.Rel(hwmon, device)
+		if err != nil {
+			return err
+		}
+		deviceLink := filepath.Join(hwmon, "device")
+		_ = os.Remove(deviceLink)
+		if err := os.Symlink(relDevice, deviceLink); err != nil {
+			return err
+		}
+		writeThermalFile(t, filepath.Join(hwmon, "name"), "nvme\n")
+		writeThermalFile(t, filepath.Join(hwmon, "temp2_label"), label+"\n")
+		writeThermalFile(t, filepath.Join(hwmon, "temp2_input"), strconv.FormatInt(milli, 10)+"\n")
 	}
-	relDevice, err := filepath.Rel(hwmon, device)
-	if err != nil {
-		return err
-	}
-	if err := os.Symlink(relDevice, filepath.Join(hwmon, "device")); err != nil {
-		return err
-	}
-	writeThermalFile(t, filepath.Join(hwmon, "name"), "nvme\n")
-	writeThermalFile(t, filepath.Join(hwmon, "temp2_label"), label+"\n")
-	writeThermalFile(t, filepath.Join(hwmon, "temp2_input"), strconv.FormatInt(milli, 10)+"\n")
 	return nil
 }
 

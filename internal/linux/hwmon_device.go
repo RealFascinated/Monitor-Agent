@@ -10,6 +10,9 @@ import (
 // hwmonDeviceID returns a stable per-device id (e.g. nvme0, sda) for generic hwmon chip names.
 func hwmonDeviceID(hwmonDir string) string {
 	root := hwmonRootDir(hwmonDir)
+	if id := deviceIDFromPath(root); isDeviceScopedID(id, root) {
+		return id
+	}
 	link := filepath.Join(root, "device")
 	target, err := filepath.EvalSymlinks(link)
 	if err != nil {
@@ -19,6 +22,13 @@ func hwmonDeviceID(hwmonDir string) string {
 		return id
 	}
 	return filepath.Base(root)
+}
+
+func isDeviceScopedID(id, hwmonRoot string) bool {
+	if id == "" || id == filepath.Base(hwmonRoot) {
+		return false
+	}
+	return !strings.HasPrefix(id, "hwmon")
 }
 
 func hwmonRootDir(dir string) string {

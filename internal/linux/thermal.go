@@ -57,10 +57,7 @@ func readThermalZoneTemperatures() []TemperatureReading {
 
 func readHwmonTemperatures() []TemperatureReading {
 	var inputs []string
-	for _, pattern := range []string{
-		"/sys/class/hwmon/hwmon*/temp*_input",
-		"/sys/class/hwmon/hwmon*/device/temp*_input",
-	} {
+	for _, pattern := range hwmonTemperatureGlobPatterns() {
 		matches, err := filepath.Glob(HostPath(pattern))
 		if err != nil {
 			continue
@@ -72,12 +69,17 @@ func readHwmonTemperatures() []TemperatureReading {
 	}
 
 	var readings []TemperatureReading
-	seen := make(map[string]struct{}, len(inputs))
+	seenPath := make(map[string]struct{}, len(inputs))
+	seenPhysical := make(map[string]struct{})
 	for _, inputPath := range inputs {
-		if _, ok := seen[inputPath]; ok {
+		resolved := inputPath
+		if abs, err := filepath.EvalSymlinks(inputPath); err == nil {
+			resolved = abs
+		}
+		if _, ok := seenPath[resolved]; ok {
 			continue
 		}
-		seen[inputPath] = struct{}{}
+		seenPath[resolved] = struct{}{}
 
 		file := filepath.Base(inputPath)
 		if !strings.HasSuffix(file, "_input") {
@@ -96,11 +98,37 @@ func readHwmonTemperatures() []TemperatureReading {
 			continue
 		}
 
-		hwName := readTrimmedFile(filepath.Join(hwmonRootDir(dir), "name"))
+		hwmonDir := hwmonRootDir(dir)
+		hwName := readTrimmedFile(filepath.Join(hwmonDir, "name"))
+		physicalKey := hwmonPhysicalKey(hwName, dir, basename, label)
+		if _, ok := seenPhysical[physicalKey]; ok {
+			continue
+		}
+		seenPhysical[physicalKey] = struct{}{}
 		sensor := hwmonSensorKey(hwName, dir, basename, label)
 		readings = append(readings, TemperatureReading{Sensor: sensor, Celsius: celsius})
 	}
 	return readings
+}
+
+func hwmonTemperatureGlobPatterns() []string {
+	return []string{
+		"/sys/class/hwmon/hwmon*/temp*_input",
+		"/sys/class/hwmon/hwmon*/device/temp*_input",
+		"/sys/class/nvme/nvme*/device/hwmon/hwmon*/temp*_input",
+		"/sys/class/nvme/nvme*/device/hwmon/hwmon*/device/temp*_input",
+	}
+}
+
+func hwmonPhysicalKey(hwName, dir, basename, label string) string {
+	if label == "" {
+		label = basename
+	}
+	deviceID := hwmonDeviceID(dir)
+	if usesDeviceScopedHwmonName(hwName) || deviceID != filepath.Base(hwmonRootDir(dir)) {
+		return deviceID + "/" + label
+	}
+	return hwName + "/" + label
 }
 
 func hwmonSensorKey(hwName, dir, basename, label string) string {
@@ -137,32 +165,23 @@ func keepTemperatureReading(candidate TemperatureReading, all []TemperatureReadi
 		if other.Sensor == candidate.Sensor {
 			continue
 		}
-		if temperaturesClose(candidate.Celsius, other.Celsius) && preferTemperatureSensor(other.Sensor, candidate.Sensor) {
+		if !temperaturesClose(candidate.Celsius, other.Celsius) {
+			continue
+		}
+		// Only drop redundant thermal_zone / ACPI-style readings when hwmon reports the same temp.
+		if isRedundantThermalReading(candidate.Sensor, other.Sensor) {
 			return false
 		}
 	}
 	return true
 }
 
-func preferTemperatureSensor(a, b string) bool {
-	// Prefer hwmon-style names (coretemp/Tctl) over generic thermal_zoneN keys.
-	aScore := temperatureSensorScore(a)
-	bScore := temperatureSensorScore(b)
-	if aScore != bScore {
-		return aScore > bScore
+// isRedundantThermalReading reports whether zoneSensor duplicates hwmonSensor.
+func isRedundantThermalReading(zoneSensor, hwmonSensor string) bool {
+	if strings.Contains(zoneSensor, "/") {
+		return false
 	}
-	return a < b
-}
-
-func temperatureSensorScore(sensor string) int {
-	switch {
-	case strings.Contains(sensor, "/"):
-		return 3
-	case strings.HasPrefix(sensor, "thermal_zone"):
-		return 1
-	default:
-		return 2
-	}
+	return strings.Contains(hwmonSensor, "/")
 }
 
 func temperaturesClose(a, b float64) bool {
