@@ -72,23 +72,60 @@ function Invoke-Quiet([scriptblock]$Block) {
     }
 }
 
-function Remove-ExistingService([string]$Nssm) {
-    $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    if (-not $svc) { return }
+function Test-ServiceRegistered([string]$Name) {
+    $output = (sc.exe query $Name 2>&1 | Out-String).Trim()
+    if ($output -match '(?i)1060|does not exist') { return $false }
+    return $output -match '(?i)SERVICE_NAME'
+}
 
-    Write-Log "Removing existing service $ServiceName"
-    if ($svc.Status -eq 'Running') {
+function Wait-ServiceRemoved([string]$Name, [int]$TimeoutSeconds = 90) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Test-ServiceRegistered -Name $Name)) { return }
+        Start-Sleep -Seconds 1
+    }
+    throw @"
+Timed out waiting for service '$Name' to finish deleting.
+Close Services (services.msc) if it is open, stop any monitor-agent.exe processes, then retry.
+"@
+}
+
+function Stop-MonitorAgentService([string]$Nssm) {
+    if (-not (Test-ServiceRegistered -Name $ServiceName)) { return }
+
+    $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -ne 'Stopped') {
+        Write-Log "Stopping service $ServiceName"
         if ($Nssm -and (Test-Path $Nssm)) {
             Invoke-Quiet { & $Nssm stop $ServiceName confirm }
         }
         Invoke-Quiet { sc.exe stop $ServiceName }
-        Start-Sleep -Seconds 2
     }
+
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Get-Process -Name 'monitor-agent' -ErrorAction SilentlyContinue)) { return }
+        Start-Sleep -Seconds 1
+    }
+
+    $procs = Get-Process -Name 'monitor-agent' -ErrorAction SilentlyContinue
+    if ($procs) {
+        Write-Log 'Stopping monitor-agent.exe processes'
+        $procs | Stop-Process -Force
+        Start-Sleep -Seconds 1
+    }
+}
+
+function Remove-ExistingService([string]$Nssm) {
+    if (-not (Test-ServiceRegistered -Name $ServiceName)) { return }
+
+    Write-Log "Removing existing service $ServiceName"
+    Stop-MonitorAgentService -Nssm $Nssm
     if ($Nssm -and (Test-Path $Nssm)) {
         Invoke-Quiet { & $Nssm remove $ServiceName confirm }
     }
     Invoke-Quiet { sc.exe delete $ServiceName }
-    Start-Sleep -Seconds 1
+    Wait-ServiceRemoved -Name $ServiceName
 }
 
 function Assert-Administrator {
@@ -124,20 +161,21 @@ function Install-AgentBinary([string]$Version, [string]$Destination) {
     $tag = "agent/v$Version"
     $asset = "monitor-agent-windows-$arch.exe"
     $baseUrl = "https://github.com/$GitHubRepo/releases/download/$tag"
-    $tmp = Join-Path $env:TEMP "monitor-agent-$Version.zip"
-    $staging = Join-Path $env:TEMP "monitor-agent-install-$Version"
+    $tmp = Join-Path $env:TEMP "monitor-agent-$Version-checksums.txt"
+    $staging = Join-Path $env:TEMP "monitor-agent-$Version.exe"
 
     Write-Log "Downloading $asset ($tag)"
-    Invoke-WebRequest -Uri "$baseUrl/$asset" -OutFile $Destination
+    Invoke-WebRequest -Uri "$baseUrl/$asset" -OutFile $staging
     Invoke-WebRequest -Uri "$baseUrl/checksums.txt" -OutFile $tmp
 
     $hashLine = (Get-Content $tmp | Where-Object { $_ -match " $([regex]::Escape($asset))`$" })
     if (-not $hashLine) { throw "Checksum entry not found for $asset" }
     $expected = ($hashLine -split '\s+')[0].ToLower()
-    $actual = (Get-FileHash -Path $Destination -Algorithm SHA256).Hash.ToLower()
+    $actual = (Get-FileHash -Path $staging -Algorithm SHA256).Hash.ToLower()
     if ($expected -ne $actual) {
         throw "Checksum mismatch for $asset"
     }
+    Copy-Item -Path $staging -Destination $Destination -Force
 }
 
 function Write-AgentConfig([string]$Path) {
@@ -154,7 +192,10 @@ enable_docker: false
 }
 
 function Set-NssmParameter([string]$Nssm, [string]$Key, [string]$Value) {
-    Invoke-Quiet { & $Nssm set $ServiceName $Key $Value }
+    & $Nssm set $ServiceName $Key $Value | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "nssm set $ServiceName $Key failed (exit $LASTEXITCODE)"
+    }
 }
 
 function Show-ServiceDiagnostics([string]$Nssm, [string]$Exe, [string]$Log) {
@@ -163,6 +204,8 @@ function Show-ServiceDiagnostics([string]$Nssm, [string]$Exe, [string]$Log) {
     & $Nssm get $ServiceName Application 2>&1
     Write-Host '--- NSSM AppDirectory ---'
     & $Nssm get $ServiceName AppDirectory 2>&1
+    Write-Host '--- NSSM AppEnvironmentExtra ---'
+    & $Nssm get $ServiceName AppEnvironmentExtra 2>&1
     if (Test-Path $Log) {
         Write-Host '--- agent.log (last 40 lines) ---'
         Get-Content $Log -Tail 40
@@ -197,13 +240,21 @@ function Get-NssmExe([string]$ToolsDir) {
     return $nssm
 }
 
-function Install-Service([string]$Nssm, [string]$Exe, [string]$Dir, [string]$LogFile) {
+function Install-Service([string]$Nssm, [string]$Exe, [string]$Dir, [string]$LogFile, [string]$ConfigFile) {
     Remove-ExistingService -Nssm $Nssm
 
     Write-Log "Installing service $ServiceName"
-    Invoke-Quiet { & $Nssm install $ServiceName $Exe }
-    # config.yml lives in AppDirectory; avoid AppEnvironmentExtra (paths with spaces break NSSM env).
+    & $Nssm install $ServiceName $Exe 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "nssm install $ServiceName failed (exit $LASTEXITCODE). The service may still be deleting; wait a minute and retry."
+    }
     Set-NssmParameter -Nssm $Nssm -Key AppDirectory -Value $Dir
+    # Absolute config path (same as install.sh systemd Environment=); do not rely on service CWD alone.
+    $configEnv = "MONITOR_CONFIG_FILE=$ConfigFile"
+    if ($ConfigFile -match '\s') {
+        $configEnv = "MONITOR_CONFIG_FILE=`"$ConfigFile`""
+    }
+    Set-NssmParameter -Nssm $Nssm -Key AppEnvironmentExtra -Value $configEnv
     Set-NssmParameter -Nssm $Nssm -Key DisplayName -Value 'Monitor Agent'
     Set-NssmParameter -Nssm $Nssm -Key Description -Value 'Monitor host metrics agent'
     Invoke-Quiet { & $Nssm set $ServiceName Start SERVICE_AUTO_START }
@@ -242,13 +293,16 @@ function Install-MonitorAgent {
     $exe = Join-Path $InstallDir 'monitor-agent.exe'
     $config = Join-Path $InstallDir 'config.yml'
     $log = Join-Path $InstallDir 'agent.log'
+    $nssmPath = Join-Path $toolsDir 'nssm.exe'
+    if (-not (Test-Path $nssmPath)) { $nssmPath = $null }
 
+    Stop-MonitorAgentService -Nssm $nssmPath
     Install-AgentBinary -Version $Version -Destination $exe
     Write-Log "Writing config to $config"
     Write-AgentConfig -Path $config
 
     $nssm = Get-NssmExe -ToolsDir $toolsDir
-    Install-Service -Nssm $nssm -Exe $exe -Dir $InstallDir -LogFile $log
+    Install-Service -Nssm $nssm -Exe $exe -Dir $InstallDir -LogFile $log -ConfigFile $config
 
     Write-Log 'Starting service'
     Invoke-Quiet { & $nssm start $ServiceName }
