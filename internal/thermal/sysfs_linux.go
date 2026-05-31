@@ -55,7 +55,7 @@ func readThermalZoneTemperatures() []TemperatureReading {
 func readHwmonTemperatures() []TemperatureReading {
 	var inputs []string
 	for _, pattern := range hwmonTemperatureGlobPatterns() {
-		matches, err := filepath.Glob(HostPath(pattern))
+		matches, err := filepath.Glob(linux.HostPath(pattern))
 		if err != nil {
 			continue
 		}

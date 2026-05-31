@@ -7,8 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"fascinated.cc/monitor/agent/internal/delta"
 )
 
 func Dir() string {

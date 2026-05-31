@@ -10,11 +10,6 @@ import (
 	"github.com/shirou/gopsutil/v4/cpu"
 )
 
-type CoreUsage struct {
-	CPU          string
-	UsagePercent float64
-}
-
 func ComputePerCoreCPUMetrics(before, after []cpu.TimesStat) []CoreUsage {
 	beforeByCPU := indexPerCoreCPU(before)
 	afterByCPU := indexPerCoreCPU(after)
