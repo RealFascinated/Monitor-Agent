@@ -123,10 +123,14 @@ func TestDeviceIDFromPath(t *testing.T) {
 
 func TestReadHwmonNVMeTemperatures(t *testing.T) {
 	root := t.TempDir()
-	if err := linkNVMeHwmon(t, root, "hwmon5", "nvme0", "Sensor 1", 51000); err != nil {
+	if err := linkNVMeHwmon(t, root, "hwmon5", "nvme0", "Composite", 51000); err != nil {
 		t.Fatal(err)
 	}
-	if err := linkNVMeHwmon(t, root, "hwmon6", "nvme1", "Sensor 1", 47000); err != nil {
+	if err := linkNVMeHwmon(t, root, "hwmon6", "nvme1", "Composite", 47000); err != nil {
+		t.Fatal(err)
+	}
+	// Same label and overlapping temps; without per-hwmon dedup the second drive is dropped.
+	if err := linkNVMeHwmon(t, root, "hwmon7", "nvme1", "Sensor 1", 47000); err != nil {
 		t.Fatal(err)
 	}
 
@@ -139,11 +143,23 @@ func TestReadHwmonNVMeTemperatures(t *testing.T) {
 	for _, r := range readings {
 		bySensor[r.Sensor] = r.Celsius
 	}
-	if bySensor["nvme0/Sensor 1"] < 50 || bySensor["nvme0/Sensor 1"] > 52 {
-		t.Fatalf("nvme0 temp = %v", bySensor["nvme0/Sensor 1"])
+	if bySensor["nvme0/Composite"] < 50 || bySensor["nvme0/Composite"] > 52 {
+		t.Fatalf("nvme0 temp = %v", bySensor["nvme0/Composite"])
 	}
-	if bySensor["nvme1/Sensor 1"] < 46 || bySensor["nvme1/Sensor 1"] > 48 {
-		t.Fatalf("nvme1 temp = %v", bySensor["nvme1/Sensor 1"])
+	if bySensor["nvme1/Composite"] < 46 || bySensor["nvme1/Composite"] > 48 {
+		t.Fatalf("nvme1 temp = %v", bySensor["nvme1/Composite"])
+	}
+}
+
+func TestNVMeSkipsRedundantDieSensors(t *testing.T) {
+	if shouldReportHwmonTemperature("nvme", "Composite") != true {
+		t.Fatal("expected Composite to be reported")
+	}
+	if shouldReportHwmonTemperature("nvme", "Sensor 1") != false {
+		t.Fatal("expected Sensor 1 to be skipped for nvme")
+	}
+	if shouldReportHwmonTemperature("k10temp", "Sensor 1") != true {
+		t.Fatal("expected cpu hwmon sensors to be reported")
 	}
 }
 

@@ -38,14 +38,46 @@ func hwmonRootDir(dir string) string {
 	return dir
 }
 
-func deviceIDFromPath(devicePath string) string {
+func nvmeControllerID(hwmonDir string) string {
+	root := hwmonRootDir(hwmonDir)
+	target, err := filepath.EvalSymlinks(filepath.Join(root, "device"))
+	if err != nil {
+		return ""
+	}
+	return nvmeControllerFromPath(target)
+}
+
+func nvmeControllerFromPath(devicePath string) string {
 	parts := strings.Split(strings.Trim(filepath.ToSlash(devicePath), "/"), "/")
 	for i := len(parts) - 1; i >= 0; i-- {
-		part := parts[i]
-		if strings.HasPrefix(part, "nvme") && part != "nvme" {
-			return part
+		if isNVMeController(parts[i]) {
+			return parts[i]
 		}
 	}
+	return ""
+}
+
+func isNVMeController(part string) bool {
+	if part == "nvme" || !strings.HasPrefix(part, "nvme") {
+		return false
+	}
+	suffix := part[4:]
+	if suffix == "" {
+		return false
+	}
+	for i := 0; i < len(suffix); i++ {
+		if suffix[i] < '0' || suffix[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func deviceIDFromPath(devicePath string) string {
+	if id := nvmeControllerFromPath(devicePath); id != "" {
+		return id
+	}
+	parts := strings.Split(strings.Trim(filepath.ToSlash(devicePath), "/"), "/")
 	for i := len(parts) - 1; i >= 0; i-- {
 		if isBlockDeviceName(parts[i]) {
 			return parts[i]
@@ -64,8 +96,20 @@ func isBlockDeviceName(name string) bool {
 	if strings.HasPrefix(name, "sd") || strings.HasPrefix(name, "hd") {
 		return len(name) >= 3
 	}
-	// nvme0n1 namespace block device
-	return strings.HasPrefix(name, "nvme") && strings.Contains(name, "n")
+	if !strings.HasPrefix(name, "nvme") || len(name) < 7 {
+		return false
+	}
+	// nvme0n1 namespace device only (not nvme0 controller or nvme1 controller).
+	suffix := name[4:]
+	for i := 0; i < len(suffix); i++ {
+		if suffix[i] == 'n' {
+			return i > 0 && i < len(suffix)-1
+		}
+		if suffix[i] < '0' || suffix[i] > '9' {
+			return false
+		}
+	}
+	return false
 }
 
 func pciAddressFromPath(parts []string) string {

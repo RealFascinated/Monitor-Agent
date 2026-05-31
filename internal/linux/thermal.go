@@ -93,14 +93,18 @@ func readHwmonTemperatures() []TemperatureReading {
 			continue
 		}
 
+		hwmonDir := hwmonRootDir(dir)
+		hwName := readTrimmedFile(filepath.Join(hwmonDir, "name"))
+		if !shouldReportHwmonTemperature(hwName, label) {
+			continue
+		}
+
 		celsius, ok := readTemperatureFile(inputPath)
 		if !ok {
 			continue
 		}
 
-		hwmonDir := hwmonRootDir(dir)
-		hwName := readTrimmedFile(filepath.Join(hwmonDir, "name"))
-		physicalKey := hwmonPhysicalKey(hwName, dir, basename, label)
+		physicalKey := hwmonPhysicalDedupKey(hwName, dir, basename, label)
 		if _, ok := seenPhysical[physicalKey]; ok {
 			continue
 		}
@@ -118,6 +122,14 @@ func hwmonTemperatureGlobPatterns() []string {
 		"/sys/class/nvme/nvme*/device/hwmon/hwmon*/temp*_input",
 		"/sys/class/nvme/nvme*/device/hwmon/hwmon*/device/temp*_input",
 	}
+}
+
+func hwmonPhysicalDedupKey(hwName, dir, basename, label string) string {
+	key := hwmonPhysicalKey(hwName, dir, basename, label)
+	if hwName == "nvme" {
+		return filepath.Base(hwmonRootDir(dir)) + "/" + key
+	}
+	return key
 }
 
 func hwmonPhysicalKey(hwName, dir, basename, label string) string {
@@ -139,7 +151,13 @@ func hwmonSensorKey(hwName, dir, basename, label string) string {
 	if prefix == "" {
 		prefix = filepath.Base(hwmonRootDir(dir))
 	}
-	if usesDeviceScopedHwmonName(prefix) {
+	if prefix == "nvme" {
+		if id := nvmeControllerID(dir); id != "" {
+			prefix = id
+		} else if deviceID := hwmonDeviceID(dir); deviceID != "" {
+			prefix = deviceID
+		}
+	} else if usesDeviceScopedHwmonName(prefix) {
 		if deviceID := hwmonDeviceID(dir); deviceID != "" {
 			prefix = deviceID
 		}
@@ -208,6 +226,15 @@ func isReportedTemperatureLabel(label string) bool {
 		return false
 	}
 	return true
+}
+
+// shouldReportHwmonTemperature filters redundant NVMe die sensors. The dashboard
+// only surfaces a handful of temperature series; Composite is the standard drive temp.
+func shouldReportHwmonTemperature(hwName, label string) bool {
+	if hwName != "nvme" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(label), "Composite")
 }
 
 func readTemperatureFile(path string) (float64, bool) {
