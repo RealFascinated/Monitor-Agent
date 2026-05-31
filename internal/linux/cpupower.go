@@ -17,21 +17,21 @@ type cpuEnergySource struct {
 }
 
 var (
-	cpuEnergyOnce   sync.Once
-	cpuEnergySource cpuEnergySource
-	cpuEnergyFound  bool
+	cpuEnergyOnce    sync.Once
+	cachedCPUEnergy  cpuEnergySource
+	cpuEnergyFound   bool
 )
 
 // ReadCPUPackageEnergyMicrojoules returns the summed package energy counter in microjoules.
 // maxMicrojoules is the wrap range when available (0 if unknown).
 func ReadCPUPackageEnergyMicrojoules() (energy uint64, maxMicrojoules uint64, ok bool) {
 	cpuEnergyOnce.Do(func() {
-		cpuEnergySource, cpuEnergyFound = discoverCPUEnergySource()
+		cachedCPUEnergy, cpuEnergyFound = discoverCPUEnergySource()
 	})
 	if !cpuEnergyFound {
 		return 0, 0, false
 	}
-	return sumEnergy(cpuEnergySource)
+	return sumEnergy(cachedCPUEnergy)
 }
 
 // ComputeCPUPowerWatts derives average package power from two energy readings.
