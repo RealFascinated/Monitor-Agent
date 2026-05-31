@@ -1,6 +1,6 @@
 //go:build windows
 
-package metric
+package cpu
 
 import (
 	"testing"

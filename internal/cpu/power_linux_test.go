@@ -1,6 +1,6 @@
 //go:build linux
 
-package linux
+package cpu
 
 import (
 	"os"
@@ -11,12 +11,12 @@ import (
 
 func TestComputeCPUPowerWatts(t *testing.T) {
 	elapsed := time.Second
-	watts, ok := ComputeCPUPowerWatts(0, 65_000_000, 0, elapsed)
+	watts, ok := ComputePowerWatts(0, 65_000_000, 0, elapsed)
 	if !ok || watts < 64.9 || watts > 65.1 {
 		t.Fatalf("watts = %v ok=%v, want ~65", watts, ok)
 	}
 
-	watts, ok = ComputeCPUPowerWatts(0, 0, 0, elapsed)
+	watts, ok = ComputePowerWatts(0, 0, 0, elapsed)
 	if ok || watts != 0 {
 		t.Fatalf("zero delta should fail: watts=%v ok=%v", watts, ok)
 	}

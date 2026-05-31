@@ -3,11 +3,12 @@
 package collector
 
 import (
+	"fascinated.cc/monitor/agent/internal/cpu"
 	"fascinated.cc/monitor/agent/internal/ingest"
-	"fascinated.cc/monitor/agent/internal/metric"
+	"fascinated.cc/monitor/agent/internal/thermal"
 )
 
-func coreMetricsFromGopsutil(cores []metric.CoreUsage) []ingest.CPUCoreMetric {
+func coreMetricsFromGopsutil(cores []cpu.CoreUsage) []ingest.CPUCoreMetric {
 	if len(cores) == 0 {
 		return nil
 	}
@@ -21,7 +22,7 @@ func coreMetricsFromGopsutil(cores []metric.CoreUsage) []ingest.CPUCoreMetric {
 	return out
 }
 
-func temperatureMetricsFromGopsutil(readings []metric.TemperatureReading) []ingest.TemperatureMetric {
+func temperatureMetricsFromGopsutil(readings []thermal.TemperatureReading) []ingest.TemperatureMetric {
 	if len(readings) == 0 {
 		return nil
 	}

@@ -1,6 +1,6 @@
 //go:build linux
 
-package linux
+package thermal
 
 import (
 	"os"
@@ -8,12 +8,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-)
 
-type TemperatureReading struct {
-	Sensor  string
-	Celsius float64
-}
+	"fascinated.cc/monitor/agent/internal/linux"
+)
 
 func ReadTemperatures() []TemperatureReading {
 	var readings []TemperatureReading
@@ -282,5 +279,5 @@ func readTrimmedFile(path string) string {
 }
 
 func sysPath(elem ...string) string {
-	return HostPath(filepath.Join(append([]string{"/sys"}, elem...)...))
+	return linux.HostPath(filepath.Join(append([]string{"/sys"}, elem...)...))
 }

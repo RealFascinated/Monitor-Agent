@@ -1,6 +1,6 @@
 //go:build linux
 
-package linux
+package cpu
 
 import (
 	"os"
@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"fascinated.cc/monitor/agent/internal/linux"
 )
 
 type cpuEnergySource struct {
@@ -17,14 +19,14 @@ type cpuEnergySource struct {
 }
 
 var (
-	cpuEnergyOnce    sync.Once
-	cachedCPUEnergy  cpuEnergySource
-	cpuEnergyFound   bool
+	cpuEnergyOnce   sync.Once
+	cachedCPUEnergy cpuEnergySource
+	cpuEnergyFound  bool
 )
 
 // ReadCPUPackageEnergyMicrojoules returns the summed package energy counter in microjoules.
 // maxMicrojoules is the wrap range when available (0 if unknown).
-func ReadCPUPackageEnergyMicrojoules() (energy uint64, maxMicrojoules uint64, ok bool) {
+func ReadPackageEnergyMicrojoules() (energy uint64, maxMicrojoules uint64, ok bool) {
 	cpuEnergyOnce.Do(func() {
 		cachedCPUEnergy, cpuEnergyFound = discoverCPUEnergySource()
 	})
@@ -34,8 +36,8 @@ func ReadCPUPackageEnergyMicrojoules() (energy uint64, maxMicrojoules uint64, ok
 	return sumEnergy(cachedCPUEnergy)
 }
 
-// ComputeCPUPowerWatts derives average package power from two energy readings.
-func ComputeCPUPowerWatts(before, after, maxMicrojoules uint64, elapsed time.Duration) (float64, bool) {
+// ComputePowerWatts derives average package power from two energy readings.
+func ComputePowerWatts(before, after, maxMicrojoules uint64, elapsed time.Duration) (float64, bool) {
 	if elapsed <= 0 {
 		return 0, false
 	}
@@ -61,7 +63,7 @@ func discoverCPUEnergySource() (cpuEnergySource, bool) {
 }
 
 func discoverIntelRAPLEnergy() (cpuEnergySource, bool) {
-	root := HostPath("/sys/class/powercap/intel-rapl")
+	root := linux.HostPath("/sys/class/powercap/intel-rapl")
 	dirs, err := filepath.Glob(filepath.Join(root, "intel-rapl:*"))
 	if err != nil {
 		return cpuEnergySource{}, false
@@ -96,7 +98,7 @@ func discoverIntelRAPLEnergy() (cpuEnergySource, bool) {
 }
 
 func discoverAMDEnergy() (cpuEnergySource, bool) {
-	dirs, err := filepath.Glob(HostPath("/sys/class/hwmon/hwmon*"))
+	dirs, err := filepath.Glob(linux.HostPath("/sys/class/hwmon/hwmon*"))
 	if err != nil {
 		return cpuEnergySource{}, false
 	}

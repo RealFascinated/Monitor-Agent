@@ -5,14 +5,18 @@ package collector
 import (
 	"time"
 
+	"fascinated.cc/monitor/agent/internal/cpu"
 	"fascinated.cc/monitor/agent/internal/delta"
 	"fascinated.cc/monitor/agent/internal/disk"
 	"fascinated.cc/monitor/agent/internal/docker"
 	"fascinated.cc/monitor/agent/internal/ingest"
 	"fascinated.cc/monitor/agent/internal/iostats"
 	"fascinated.cc/monitor/agent/internal/linux"
+	"fascinated.cc/monitor/agent/internal/loadavg"
+	"fascinated.cc/monitor/agent/internal/memory"
 	"fascinated.cc/monitor/agent/internal/network"
 	"fascinated.cc/monitor/agent/internal/sample"
+	"fascinated.cc/monitor/agent/internal/thermal"
 	"fascinated.cc/monitor/agent/internal/zfs"
 )
 
@@ -31,7 +35,7 @@ func collect(opts Options) (Result, error) {
 	}
 
 	cgroup := linux.Dir()
-	cgroupCPUBefore, hasCgroupCPU := linux.ReadCPUUsageUsec(cgroup)
+	cgroupCPUBefore, hasCgroupCPU := cpu.ReadCgroupUsageUsec(cgroup)
 
 	mounts, err := disk.ListMounts()
 	if err != nil {
@@ -39,11 +43,11 @@ func collect(opts Options) (Result, error) {
 	}
 
 	var (
-		poolStatus    zfs.PoolStatusSnapshot
-		zfsIOBefore   map[string]zfs.PoolIO
+		poolStatus      zfs.PoolStatusSnapshot
+		zfsIOBefore     map[string]zfs.PoolIO
 		zfsIostatFuture func() map[string]zfs.PoolIORates
-		arcBefore     zfs.ArcSnapshot
-		hasArcBefore  bool
+		arcBefore       zfs.ArcSnapshot
+		hasArcBefore    bool
 	)
 
 	if opts.HasZFS {
@@ -56,7 +60,7 @@ func collect(opts Options) (Result, error) {
 	diskstatsBefore := linux.ReadDiskstats()
 	cgroupIOBefore := linux.ReadIOStats()
 	procBefore := linux.ReadProcStat()
-	powerBefore, powerMaxBefore, hasPowerBefore := linux.ReadCPUPackageEnergyMicrojoules()
+	powerBefore, powerMaxBefore, hasPowerBefore := cpu.ReadPackageEnergyMicrojoules()
 
 	netBefore, err := network.ReadCounters()
 	if err != nil {
@@ -69,8 +73,8 @@ func collect(opts Options) (Result, error) {
 
 	var metrics ingest.ServerMetrics
 	procAfter := linux.ReadProcStat()
-	loadavgSnap := linux.ReadLoadavg()
-	memSnap := linux.ReadMemory()
+	avg := loadavg.Read()
+	memSnap := memory.Read()
 	if procBefore.HasCPU && procAfter.HasCPU {
 		usage, user, system, iowait, steal := linux.ComputeCPUFromProcStat(procBefore.CPU, procAfter.CPU)
 		metrics.CPUUsage = usage
@@ -80,23 +84,23 @@ func collect(opts Options) (Result, error) {
 		metrics.CPUStealPercent = steal
 	}
 	if len(procBefore.PerCPU) > 0 && len(procAfter.PerCPU) > 0 {
-		metrics.CPUCoreMetrics = coreMetricsFromLinux(linux.ComputePerCoreCPU(procBefore.PerCPU, procAfter.PerCPU))
+		metrics.CPUCoreMetrics = coreMetricsFromLinux(cpu.ComputePerCoreCPU(procBefore.PerCPU, procAfter.PerCPU))
 	}
-	metrics.TemperatureMetrics = temperatureMetricsFromLinux(linux.ReadTemperatures())
+	metrics.TemperatureMetrics = temperatureMetricsFromLinux(thermal.ReadTemperatures())
 	if hasPowerBefore {
-		if powerAfter, powerMaxAfter, ok := linux.ReadCPUPackageEnergyMicrojoules(); ok {
+		if powerAfter, powerMaxAfter, ok := cpu.ReadPackageEnergyMicrojoules(); ok {
 			maxEnergy := powerMaxAfter
 			if maxEnergy == 0 {
 				maxEnergy = powerMaxBefore
 			}
-			if watts, ok := linux.ComputeCPUPowerWatts(powerBefore, powerAfter, maxEnergy, elapsed); ok {
+			if watts, ok := cpu.ComputePowerWatts(powerBefore, powerAfter, maxEnergy, elapsed); ok {
 				metrics.CPUPowerWatts = watts
 			}
 		}
 	}
 	if hasCgroupCPU {
-		if afterUsage, ok := linux.ReadCPUUsageUsec(cgroup); ok {
-			if usage, ok := linux.ComputeCPUUsage(cgroupCPUBefore, afterUsage, cgroup, elapsed); ok {
+		if afterUsage, ok := cpu.ReadCgroupUsageUsec(cgroup); ok {
+			if usage, ok := cpu.CgroupUsagePercent(cgroupCPUBefore, afterUsage, cgroup, elapsed); ok {
 				metrics.CPUUsage = usage
 			}
 		}
@@ -105,11 +109,11 @@ func collect(opts Options) (Result, error) {
 	metrics.ContextSwitchesPerSecond = iostats.PerSecond(delta.Uint64(procAfter.ContextSwitches, procBefore.ContextSwitches), elapsed)
 	metrics.InterruptsPerSecond = iostats.PerSecond(delta.Uint64(procAfter.Interrupts, procBefore.Interrupts), elapsed)
 
-	metrics.Load1 = loadavgSnap.Load1
-	metrics.Load5 = loadavgSnap.Load5
-	metrics.Load15 = loadavgSnap.Load15
-	metrics.ProcessCount = loadavgSnap.Total
-	metrics.RunningProcesses = loadavgSnap.Running
+	metrics.Load1 = avg.Load1
+	metrics.Load5 = avg.Load5
+	metrics.Load15 = avg.Load15
+	metrics.ProcessCount = avg.ProcessCount
+	metrics.RunningProcesses = avg.RunningProcesses
 
 	metrics.MemoryUsage = memSnap.Usage
 	metrics.MemoryTotal = memSnap.Total

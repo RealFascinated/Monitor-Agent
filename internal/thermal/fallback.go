@@ -1,6 +1,6 @@
 //go:build windows
 
-package metric
+package thermal
 
 import (
 	"sort"

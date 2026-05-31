@@ -13,8 +13,8 @@ import (
 const ipCacheTTL = 5 * time.Minute
 
 var (
-	ipCacheMu sync.Mutex
-	cachedIP  string
+	ipCacheMu  sync.Mutex
+	cachedIP   string
 	ipCachedAt time.Time
 )
 

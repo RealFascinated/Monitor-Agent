@@ -3,8 +3,8 @@
 package host
 
 import (
+	cpupkg "fascinated.cc/monitor/agent/internal/cpu"
 	"fascinated.cc/monitor/agent/internal/ingest"
-	"fascinated.cc/monitor/agent/internal/metric"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/host"
@@ -19,7 +19,7 @@ func populatePlatformDetails(details ingest.ServerDetails) ingest.ServerDetails 
 	if err == nil && len(info) > 0 {
 		details.CPUModel = info[0].ModelName
 	}
-	details.SocketCount = metric.SocketCount(info)
+	details.SocketCount = cpupkg.SocketCount(info)
 
 	if cores, err := cpu.Counts(false); err == nil {
 		details.CoreCount = cores

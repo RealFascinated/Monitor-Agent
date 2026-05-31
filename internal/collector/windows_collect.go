@@ -8,15 +8,16 @@ import (
 	"time"
 
 	"fascinated.cc/monitor/agent/internal/counters"
+	cpupkg "fascinated.cc/monitor/agent/internal/cpu"
 	"fascinated.cc/monitor/agent/internal/delta"
 	"fascinated.cc/monitor/agent/internal/disk"
 	"fascinated.cc/monitor/agent/internal/docker"
 	"fascinated.cc/monitor/agent/internal/ingest"
 	"fascinated.cc/monitor/agent/internal/iostats"
 	"fascinated.cc/monitor/agent/internal/lhm"
-	"fascinated.cc/monitor/agent/internal/metric"
 	"fascinated.cc/monitor/agent/internal/network"
 	"fascinated.cc/monitor/agent/internal/sample"
+	"fascinated.cc/monitor/agent/internal/thermal"
 	"fascinated.cc/monitor/agent/internal/zfs"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -78,8 +79,8 @@ func collect(opts Options) (Result, error) {
 		zfsFuture = zfs.StartPoolIostatSample()
 	}
 
-	metric.BeginIowaitSample()
-	metric.BeginCPUPowerSample()
+	cpupkg.BeginIowaitSample()
+	cpupkg.BeginCPUPowerSample()
 
 	sampleStart := time.Now()
 	time.Sleep(sample.Interval)
@@ -90,7 +91,7 @@ func collect(opts Options) (Result, error) {
 		return result, err
 	}
 	perCPUAfter, _ := cpu.Times(true)
-	iowait := metric.EndIowaitSample()
+	iowait := cpupkg.EndIowaitSample()
 
 	netAfter, err := network.ReadCounters()
 	if err != nil {
@@ -152,7 +153,7 @@ func buildWindowsServerMetrics(
 	perCPUBefore, perCPUAfter []cpu.TimesStat,
 	iowait float64,
 ) ingest.ServerMetrics {
-	breakdown := metric.ComputeCPUMetrics(cpuBefore, cpuAfter)
+	breakdown := cpupkg.ComputeCPUMetrics(cpuBefore, cpuAfter)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -174,13 +175,13 @@ func buildWindowsServerMetrics(
 		metrics.CPUUsage = breakdown.Total
 	}
 	if len(snap.Cores) == 0 {
-		metrics.CPUCoreMetrics = coreMetricsFromGopsutil(metric.ComputePerCoreCPUMetrics(perCPUBefore, perCPUAfter))
+		metrics.CPUCoreMetrics = coreMetricsFromGopsutil(cpupkg.ComputePerCoreCPUMetrics(perCPUBefore, perCPUAfter))
 	}
 	if len(snap.Temperatures) == 0 {
-		metrics.TemperatureMetrics = temperatureMetricsFromGopsutil(metric.ReadTemperatures())
+		metrics.TemperatureMetrics = temperatureMetricsFromGopsutil(thermal.ReadTemperatures())
 	}
 	if metrics.CPUPowerWatts <= 0 {
-		if watts, ok := metric.EndCPUPowerSample(); ok {
+		if watts, ok := cpupkg.EndCPUPowerSample(); ok {
 			metrics.CPUPowerWatts = watts
 		}
 	}

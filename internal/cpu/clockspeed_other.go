@@ -1,6 +1,6 @@
 //go:build !linux && !windows
 
-package metric
+package cpu
 
 import (
 	"fmt"

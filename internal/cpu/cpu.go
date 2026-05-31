@@ -1,6 +1,6 @@
 //go:build !linux
 
-package metric
+package cpu
 
 import (
 	"math"

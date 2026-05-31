@@ -7,17 +7,12 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
 	"fascinated.cc/monitor/agent/internal/delta"
 	"fascinated.cc/monitor/agent/internal/iostats"
 )
-
-type CPUStat struct {
-	User, Nice, System, Idle, Iowait, Irq, Softirq, Steal uint64
-}
 
 type DiskstatsEntry struct {
 	Reads, SectorsRead, ReadMs, Writes, SectorsWritten, WriteMs, IoMs uint64
@@ -27,8 +22,8 @@ type CgroupIOEntry struct {
 	Rbytes, Wbytes uint64
 }
 
-type MemoryExtras struct {
-	Buffers, Cached, SwapUsed, SwapTotal int64
+type CPUStat struct {
+	User, Nice, System, Idle, Iowait, Irq, Softirq, Steal uint64
 }
 
 type ProcStatSnapshot struct {
@@ -37,16 +32,6 @@ type ProcStatSnapshot struct {
 	HasCPU          bool
 	ContextSwitches uint64
 	Interrupts      uint64
-}
-
-type LoadavgSnapshot struct {
-	Load1, Load5, Load15 float64
-	Running, Total       int64
-}
-
-type MemorySnapshot struct {
-	Usage, Total, Available float64
-	Extras                  MemoryExtras
 }
 
 var (
@@ -133,80 +118,6 @@ func ComputeCPUFromProcStat(before, after CPUStat) (usage, user, system, iowait,
 	iowait = float64(duIO) / float64(total) * 100
 	steal = float64(duSteal) / float64(total) * 100
 	return usage, user, system, iowait, steal
-}
-
-func ReadLoadavg() LoadavgSnapshot {
-	data, err := os.ReadFile("/proc/loadavg")
-	if err != nil {
-		return LoadavgSnapshot{}
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) < 4 {
-		return LoadavgSnapshot{}
-	}
-
-	load1, _ := strconv.ParseFloat(fields[0], 64)
-	load5, _ := strconv.ParseFloat(fields[1], 64)
-	load15, _ := strconv.ParseFloat(fields[2], 64)
-
-	var running, total int64
-	if parts := strings.Split(fields[3], "/"); len(parts) == 2 {
-		running, _ = strconv.ParseInt(parts[0], 10, 64)
-		total, _ = strconv.ParseInt(parts[1], 10, 64)
-	}
-
-	return LoadavgSnapshot{
-		Load1: load1, Load5: load5, Load15: load15,
-		Running: running, Total: total,
-	}
-}
-
-func ReadMemory() MemorySnapshot {
-	if max, current, ok := cgroupMemoryBytes(); ok {
-		return MemorySnapshot{
-			Usage:     float64(current),
-			Total:     float64(max),
-			Available: float64(max - current),
-		}
-	}
-
-	file, err := os.Open("/proc/meminfo")
-	if err != nil {
-		return MemorySnapshot{}
-	}
-	defer file.Close()
-
-	var snap MemorySnapshot
-	var swapTotal, swapFree uint64
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) < 2 {
-			continue
-		}
-		valueBytes := int64(ParseUint64(fields[1]) * 1024)
-		switch fields[0] {
-		case "MemTotal:":
-			snap.Total = float64(valueBytes)
-		case "MemAvailable:":
-			snap.Available = float64(valueBytes)
-		case "Buffers:":
-			snap.Extras.Buffers = valueBytes
-		case "Cached:":
-			snap.Extras.Cached = valueBytes
-		case "SwapTotal:":
-			swapTotal = ParseUint64(fields[1]) * 1024
-		case "SwapFree:":
-			swapFree = ParseUint64(fields[1]) * 1024
-		}
-	}
-	snap.Usage = snap.Total - snap.Available
-	snap.Extras.SwapTotal = int64(swapTotal)
-	snap.Extras.SwapUsed = int64(swapTotal - swapFree)
-	if snap.Extras.SwapUsed < 0 {
-		snap.Extras.SwapUsed = 0
-	}
-	return snap
 }
 
 func ReadDiskstats() map[string]DiskstatsEntry {

@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"fascinated.cc/monitor/agent/internal/counters"
+	cpupkg "fascinated.cc/monitor/agent/internal/cpu"
 	"fascinated.cc/monitor/agent/internal/delta"
 	"fascinated.cc/monitor/agent/internal/disk"
 	"fascinated.cc/monitor/agent/internal/docker"
 	"fascinated.cc/monitor/agent/internal/ingest"
 	"fascinated.cc/monitor/agent/internal/iostats"
 	"fascinated.cc/monitor/agent/internal/loadavg"
-	"fascinated.cc/monitor/agent/internal/metric"
 	"fascinated.cc/monitor/agent/internal/network"
 	"fascinated.cc/monitor/agent/internal/sample"
 	"fascinated.cc/monitor/agent/internal/zfs"
@@ -80,7 +80,7 @@ func collectGopsutil(opts Options, platformOpts gopsutilOptions) (Result, error)
 	}
 
 	if platformOpts.enableIowaitSample {
-		metric.BeginIowaitSample()
+		cpupkg.BeginIowaitSample()
 	}
 
 	sampleStart := time.Now()
@@ -92,9 +92,9 @@ func collectGopsutil(opts Options, platformOpts gopsutilOptions) (Result, error)
 		return result, err
 	}
 	perCPUAfter, _ := cpu.Times(true)
-	cpuMetrics := metric.ComputeCPUMetrics(cpuBefore[0], cpuAfter[0])
+	cpuMetrics := cpupkg.ComputeCPUMetrics(cpuBefore[0], cpuAfter[0])
 	if platformOpts.enableIowaitSample {
-		cpuMetrics.Iowait = metric.EndIowaitSample()
+		cpuMetrics.Iowait = cpupkg.EndIowaitSample()
 	}
 
 	netAfter, err := network.ReadCounters()

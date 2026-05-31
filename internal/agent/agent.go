@@ -7,12 +7,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robfig/cron/v3"
 	"fascinated.cc/monitor/agent/internal/collector"
+	"fascinated.cc/monitor/agent/internal/cpu"
 	"fascinated.cc/monitor/agent/internal/host"
 	"fascinated.cc/monitor/agent/internal/ingest"
-	"fascinated.cc/monitor/agent/internal/metric"
 	"fascinated.cc/monitor/agent/internal/zfs"
+	"github.com/robfig/cron/v3"
 )
 
 const DefaultVersion = "2.0.0"
@@ -135,7 +135,7 @@ func (a *Agent) pushOnce() {
 		a.ServerDetails.UptimeSeconds = uptime
 	}
 
-	if mhz, err := metric.GetClockSpeedMHz(); err != nil {
+	if mhz, err := cpu.GetClockSpeedMHz(); err != nil {
 		slog.Warn("cpu clock speed unavailable", "err", err)
 	} else {
 		a.ServerDetails.CPUClockMhz = mhz

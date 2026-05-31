@@ -1,4 +1,4 @@
-package metric
+package thermal
 
 type TemperatureReading struct {
 	Sensor  string

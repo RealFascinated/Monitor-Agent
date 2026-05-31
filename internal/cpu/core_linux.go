@@ -1,19 +1,16 @@
 //go:build linux
 
-package linux
+package cpu
 
 import (
 	"math"
 	"sort"
 	"strconv"
+
+	"fascinated.cc/monitor/agent/internal/linux"
 )
 
-type CoreUsage struct {
-	CPU          string
-	UsagePercent float64
-}
-
-func ComputePerCoreCPU(before, after map[string]CPUStat) []CoreUsage {
+func ComputePerCoreCPU(before, after map[string]linux.CPUStat) []CoreUsage {
 	if len(before) == 0 || len(after) == 0 {
 		return nil
 	}
@@ -35,7 +32,7 @@ func ComputePerCoreCPU(before, after map[string]CPUStat) []CoreUsage {
 
 	out := make([]CoreUsage, 0, len(ids))
 	for _, id := range ids {
-		usage, _, _, _, _ := ComputeCPUFromProcStat(before[id], after[id])
+		usage, _, _, _, _ := linux.ComputeCPUFromProcStat(before[id], after[id])
 		out = append(out, CoreUsage{
 			CPU:          id,
 			UsagePercent: clampPercent(usage),

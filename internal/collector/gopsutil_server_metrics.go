@@ -3,8 +3,9 @@
 package collector
 
 import (
+	cpupkg "fascinated.cc/monitor/agent/internal/cpu"
 	"fascinated.cc/monitor/agent/internal/ingest"
-	"fascinated.cc/monitor/agent/internal/metric"
+	"fascinated.cc/monitor/agent/internal/thermal"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/mem"
@@ -15,7 +16,7 @@ func serverMetricsFromGopsutil(
 	perCPUBefore, perCPUAfter []cpu.TimesStat,
 	iowait float64,
 ) ingest.ServerMetrics {
-	cpuMetrics := metric.ComputeCPUMetrics(cpuBefore, cpuAfter)
+	cpuMetrics := cpupkg.ComputeCPUMetrics(cpuBefore, cpuAfter)
 	metrics := ingest.ServerMetrics{
 		CPUUsage:         cpuMetrics.Total,
 		CPUUserPercent:   cpuMetrics.User,
@@ -23,8 +24,8 @@ func serverMetricsFromGopsutil(
 		CPUIowaitPercent: iowait,
 		CPUStealPercent:  cpuMetrics.Steal,
 	}
-	metrics.CPUCoreMetrics = coreMetricsFromGopsutil(metric.ComputePerCoreCPUMetrics(perCPUBefore, perCPUAfter))
-	metrics.TemperatureMetrics = temperatureMetricsFromGopsutil(metric.ReadTemperatures())
+	metrics.CPUCoreMetrics = coreMetricsFromGopsutil(cpupkg.ComputePerCoreCPUMetrics(perCPUBefore, perCPUAfter))
+	metrics.TemperatureMetrics = temperatureMetricsFromGopsutil(thermal.ReadTemperatures())
 
 	if vm, err := mem.VirtualMemory(); err == nil {
 		metrics.MemoryUsage = float64(vm.Used)
