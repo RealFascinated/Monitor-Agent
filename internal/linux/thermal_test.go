@@ -5,6 +5,7 @@ package linux
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -78,6 +79,66 @@ func TestIsReportedTemperatureLabel(t *testing.T) {
 	if isReportedTemperatureLabel("Critical Temperature") {
 		t.Fatal("expected false for critical threshold label")
 	}
+}
+
+func TestDeviceIDFromPath(t *testing.T) {
+	path := "/sys/devices/pci0000:00/0000:05:00.0/nvme/nvme0"
+	if got := deviceIDFromPath(path); got != "nvme0" {
+		t.Fatalf("nvme id = %q, want nvme0", got)
+	}
+	path = "/sys/devices/pci0000:00/0000:06:00.0/nvme/nvme1"
+	if got := deviceIDFromPath(path); got != "nvme1" {
+		t.Fatalf("nvme id = %q, want nvme1", got)
+	}
+}
+
+func TestReadHwmonNVMeTemperatures(t *testing.T) {
+	root := t.TempDir()
+	if err := linkNVMeHwmon(t, root, "hwmon5", "nvme0", "Sensor 1", 51000); err != nil {
+		t.Fatal(err)
+	}
+	if err := linkNVMeHwmon(t, root, "hwmon6", "nvme1", "Sensor 1", 47000); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("MONITOR_HOST_ROOT", root)
+	readings := readHwmonTemperatures()
+	if len(readings) != 2 {
+		t.Fatalf("readings = %+v", readings)
+	}
+	bySensor := map[string]float64{}
+	for _, r := range readings {
+		bySensor[r.Sensor] = r.Celsius
+	}
+	if bySensor["nvme0/Sensor 1"] < 50 || bySensor["nvme0/Sensor 1"] > 52 {
+		t.Fatalf("nvme0 temp = %v", bySensor["nvme0/Sensor 1"])
+	}
+	if bySensor["nvme1/Sensor 1"] < 46 || bySensor["nvme1/Sensor 1"] > 48 {
+		t.Fatalf("nvme1 temp = %v", bySensor["nvme1/Sensor 1"])
+	}
+}
+
+func linkNVMeHwmon(t *testing.T, root, hwmonName, nvmeName, label string, milli int64) error {
+	t.Helper()
+	device := filepath.Join(root, "sys", "devices", "pci0000", "0000:05:00.0", "nvme", nvmeName)
+	hwmon := filepath.Join(root, "sys", "class", "hwmon", hwmonName)
+	if err := os.MkdirAll(device, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(hwmon, 0o755); err != nil {
+		return err
+	}
+	relDevice, err := filepath.Rel(hwmon, device)
+	if err != nil {
+		return err
+	}
+	if err := os.Symlink(relDevice, filepath.Join(hwmon, "device")); err != nil {
+		return err
+	}
+	writeThermalFile(t, filepath.Join(hwmon, "name"), "nvme\n")
+	writeThermalFile(t, filepath.Join(hwmon, "temp2_label"), label+"\n")
+	writeThermalFile(t, filepath.Join(hwmon, "temp2_input"), strconv.FormatInt(milli, 10)+"\n")
+	return nil
 }
 
 func writeThermalFile(t *testing.T, path, content string) {

@@ -96,7 +96,7 @@ func readHwmonTemperatures() []TemperatureReading {
 			continue
 		}
 
-		hwName := readTrimmedFile(filepath.Join(dir, "name"))
+		hwName := readTrimmedFile(filepath.Join(hwmonRootDir(dir), "name"))
 		sensor := hwmonSensorKey(hwName, dir, basename, label)
 		readings = append(readings, TemperatureReading{Sensor: sensor, Celsius: celsius})
 	}
@@ -104,13 +104,19 @@ func readHwmonTemperatures() []TemperatureReading {
 }
 
 func hwmonSensorKey(hwName, dir, basename, label string) string {
-	if hwName == "" {
-		hwName = filepath.Base(dir)
-	}
 	if label == "" {
 		label = basename
 	}
-	return hwName + "/" + label
+	prefix := hwName
+	if prefix == "" {
+		prefix = filepath.Base(hwmonRootDir(dir))
+	}
+	if usesDeviceScopedHwmonName(prefix) {
+		if deviceID := hwmonDeviceID(dir); deviceID != "" {
+			prefix = deviceID
+		}
+	}
+	return prefix + "/" + label
 }
 
 func dedupeTemperatureReadings(readings []TemperatureReading) []TemperatureReading {
