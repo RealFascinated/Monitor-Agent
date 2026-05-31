@@ -167,11 +167,9 @@ jobs:
         run: |
           set -euo pipefail
           cp config-example.yml dist/config-example.yml
-          cp install.sh dist/install.sh
-          chmod +x dist/install.sh
           (
             cd dist
-            sha256sum ${BINARY_NAME}-* config-example.yml install.sh > checksums.txt
+            sha256sum ${BINARY_NAME}-* config-example.yml > checksums.txt
           )
 
       - name: Publish GitHub release

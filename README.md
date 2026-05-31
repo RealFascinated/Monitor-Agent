@@ -5,7 +5,7 @@ Lightweight host metrics agent for [Monitor](https://monitor.fascinated.cc). Col
 ## Install (Linux)
 
 ```bash
-curl -fsSL https://github.com/RealFascinated/Monitor-Agent/releases/latest/download/install.sh \
+curl -fsSL https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/main/install.sh \
   | sudo bash -s -- install YOUR_INGEST_TOKEN
 ```
 
@@ -13,13 +13,23 @@ curl -fsSL https://github.com/RealFascinated/Monitor-Agent/releases/latest/downl
 
 Download `monitor-agent-windows-amd64.exe` from the [latest agent release](https://github.com/RealFascinated/Monitor-Agent/releases). The Windows build embeds [LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) for CPU, memory, per-core usage, and temperature sensors (see [licenses/LibreHardwareMonitor/NOTICE.md](licenses/LibreHardwareMonitor/NOTICE.md)).
 
-Run the agent **as Administrator** so hardware sensors can be read. The Windows binary is larger than Linux builds because it includes the .NET helper payload.
+Install as a background service (Administrator PowerShell):
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\install.ps1 install YOUR_INGEST_TOKEN
+```
+
+The installer downloads the release binary (or use `-BinaryPath .\monitor-agent.exe`), writes `config.yml` under `%ProgramData%\MonitorAgent`, registers a **monitor-agent** service via [NSSM](https://nssm.cc/), and logs to `agent.log` in that folder. Uninstall: `.\install.ps1 uninstall`.
+
+Run the agent **as Administrator** so hardware sensors can be read.
 
 Build from source on Windows:
 
 ```powershell
 .\scripts\build-lhm.ps1
 go build -tags lhmbundle -o monitor-agent.exe ./cmd/main.go
+.\install.ps1 install YOUR_INGEST_TOKEN -BinaryPath .\monitor-agent.exe
 ```
 
 ## Configuration
