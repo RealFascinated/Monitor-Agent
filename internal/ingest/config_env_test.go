@@ -11,6 +11,7 @@ func TestConfigEnvVar(t *testing.T) {
 		"api_endpoint":   "MONITOR_API_ENDPOINT",
 		"push_schedule":  "MONITOR_PUSH_SCHEDULE",
 		"enable_docker":  "MONITOR_ENABLE_DOCKER",
+		"print_mode":     "MONITOR_PRINT_MODE",
 		"config_file":    "MONITOR_CONFIG_FILE",
 	}
 	for key, want := range tests {

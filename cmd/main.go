@@ -37,6 +37,16 @@ func main() {
 		os.Exit(0)
 	}
 
+	if len(os.Args) > 1 && os.Args[1] == "print" {
+		config, err := ingest.LoadPrintConfig()
+		if err != nil {
+			slog.Error("load config", "err", err)
+			os.Exit(1)
+		}
+		agent.New(config, agentVersion).PrintOnce()
+		return
+	}
+
 	config, err := ingest.LoadConfig()
 	if err != nil {
 		slog.Error("load config", "err", err)

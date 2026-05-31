@@ -26,6 +26,7 @@ type fileConfig struct {
 	ApiEndpoint  string `yaml:"api_endpoint"`
 	PushSchedule string `yaml:"push_schedule"`
 	EnableDocker *bool  `yaml:"enable_docker"`
+	PrintMode    *bool  `yaml:"print_mode"`
 }
 
 type Config struct {
@@ -33,6 +34,7 @@ type Config struct {
 	ApiEndpoint  string
 	PushSchedule string
 	EnableDocker bool
+	PrintMode    bool
 }
 
 // ConfigEnvVar returns the environment variable for a config YAML key (e.g. ingest_token -> MONITOR_INGEST_TOKEN).
@@ -41,6 +43,14 @@ func ConfigEnvVar(yamlKey string) string {
 }
 
 func LoadConfig() (*Config, error) {
+	return loadConfig(false)
+}
+
+func LoadPrintConfig() (*Config, error) {
+	return loadConfig(true)
+}
+
+func loadConfig(forcePrint bool) (*Config, error) {
 	raw, _, err := loadFileConfig()
 	if err != nil {
 		return nil, err
@@ -64,11 +74,14 @@ func LoadConfig() (*Config, error) {
 	if raw.EnableDocker != nil {
 		config.EnableDocker = *raw.EnableDocker
 	}
+	if forcePrint || (raw.PrintMode != nil && *raw.PrintMode) {
+		config.PrintMode = true
+	}
 
 	if config.ApiEndpoint == "" {
 		config.ApiEndpoint = defaultAPIEndpoint
 	}
-	if config.IngestToken == "" {
+	if !config.PrintMode && config.IngestToken == "" {
 		return nil, fmt.Errorf(
 			"config: ingest_token is required (set %s or ingest_token in config file)",
 			ConfigEnvVar("ingest_token"),

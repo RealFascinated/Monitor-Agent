@@ -163,12 +163,25 @@ func (a *Agent) pushOnce() {
 		DockerContainers: sample.DockerContainers,
 	}
 
+	if config.PrintMode {
+		if err := ingest.Print(data); err != nil {
+			slog.Error("print metrics", "err", err)
+			return
+		}
+		slog.Info("metrics printed", "duration", time.Since(collectStart).Round(time.Millisecond))
+		return
+	}
+
 	if err := ingest.Push(config, data, a.Version); err != nil {
 		slog.Error("push metrics", "err", err)
 		return
 	}
 
 	slog.Info("metrics pushed", "duration", time.Since(collectStart).Round(time.Millisecond))
+}
+
+func (a *Agent) PrintOnce() {
+	a.pushOnce()
 }
 
 func InitLogger() {

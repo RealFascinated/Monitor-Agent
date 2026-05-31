@@ -3,3 +3,4 @@ ingest_token: ""
 api_endpoint: "https://monitor.fascinated.cc/api/v1/servers/ingest"
 push_schedule: "*/15 * * * * *"
 enable_docker: true
+# print_mode: false  # emit JSON to stdout instead of pushing (ingest_token not required)
