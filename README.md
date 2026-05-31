@@ -9,6 +9,19 @@ curl -fsSL https://github.com/RealFascinated/Monitor-Agent/releases/latest/downl
   | sudo bash -s -- install YOUR_INGEST_TOKEN
 ```
 
+## Windows
+
+Download `monitor-agent-windows-amd64.exe` from the [latest agent release](https://github.com/RealFascinated/Monitor-Agent/releases). The Windows build embeds [LibreHardwareMonitorLib](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) for CPU, memory, per-core usage, and temperature sensors (see [licenses/LibreHardwareMonitor/NOTICE.md](licenses/LibreHardwareMonitor/NOTICE.md)).
+
+Run the agent **as Administrator** so hardware sensors can be read. The Windows binary is larger than Linux builds because it includes the .NET helper payload.
+
+Build from source on Windows:
+
+```powershell
+.\scripts\build-lhm.ps1
+go build -tags lhmbundle -o monitor-agent.exe ./cmd/main.go
+```
+
 ## Configuration
 
 A config file is optional. Provide settings in `config.yml` (see `config-example.yml`) or entirely via environment variables. Environment variables override values from the file.

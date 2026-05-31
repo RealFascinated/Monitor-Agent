@@ -56,38 +56,119 @@ jobs:
       - name: Run tests
         run: go test ./...
 
-      - name: Build release binaries
+      - name: Build Linux release binaries
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p dist
-
-          platforms=(
-            "linux amd64"
-            "linux arm64"
-            "windows amd64"
-          )
-
           ldflags="-s -w -X main.agentVersion=${VERSION}"
-
-          for platform in "${platforms[@]}"; do
+          for platform in "linux amd64" "linux arm64"; do
             read -r goos goarch <<< "$platform"
             output="dist/${BINARY_NAME}-${goos}-${goarch}"
-            if [ "$goos" = "windows" ]; then
-              output="${output}.exe"
-            fi
-
             echo "Building ${goos}/${goarch} -> ${output}"
             GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
               go build -ldflags "$ldflags" -o "$output" ./cmd/main.go
           done
 
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binaries
+          path: dist/monitor-agent-linux-*
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          version="${tag#agent/v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build LHM helper
+        shell: pwsh
+        run: ./scripts/build-lhm.ps1
+
+      - name: Test Windows packages
+        shell: bash
+        run: go test -tags lhmbundle ./...
+
+      - name: Build Windows binary
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ldflags="-s -w -X main.agentVersion=${VERSION}"
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -tags lhmbundle -ldflags "$ldflags" -o "dist/${BINARY_NAME}-windows-amd64.exe" ./cmd/main.go
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binary
+          path: dist/monitor-agent-windows-amd64.exe
+
+  publish:
+    needs: [release, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          version="${tag#agent/v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Package release files
+        shell: bash
+        run: |
+          set -euo pipefail
           cp config-example.yml dist/config-example.yml
           cp install.sh dist/install.sh
           chmod +x dist/install.sh
-
           (
             cd dist
             sha256sum ${BINARY_NAME}-* config-example.yml install.sh > checksums.txt

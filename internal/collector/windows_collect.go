@@ -1,8 +1,10 @@
-//go:build !linux && !windows
+//go:build windows
 
 package collector
 
 import (
+	"context"
+	"log/slog"
 	"time"
 
 	"fascinated.cc/monitor/agent/internal/counters"
@@ -11,6 +13,7 @@ import (
 	"fascinated.cc/monitor/agent/internal/docker"
 	"fascinated.cc/monitor/agent/internal/ingest"
 	"fascinated.cc/monitor/agent/internal/iostats"
+	"fascinated.cc/monitor/agent/internal/lhm"
 	"fascinated.cc/monitor/agent/internal/loadavg"
 	"fascinated.cc/monitor/agent/internal/metric"
 	"fascinated.cc/monitor/agent/internal/network"
@@ -18,13 +21,10 @@ import (
 	"fascinated.cc/monitor/agent/internal/zfs"
 
 	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
-type gopsutilOptions struct {
-	enableIowaitSample bool
-}
-
-func collectGopsutil(opts Options, platformOpts gopsutilOptions) (Result, error) {
+func collect(opts Options) (Result, error) {
 	result := Result{
 		InterfaceMetrics: []ingest.InterfaceMetrics{},
 		DiskMetrics:      []ingest.DiskMetric{},
@@ -79,9 +79,7 @@ func collectGopsutil(opts Options, platformOpts gopsutilOptions) (Result, error)
 		zfsFuture = zfs.StartPoolIostatSample()
 	}
 
-	if platformOpts.enableIowaitSample {
-		metric.BeginIowaitSample()
-	}
+	metric.BeginIowaitSample()
 
 	sampleStart := time.Now()
 	time.Sleep(sample.Interval)
@@ -92,10 +90,7 @@ func collectGopsutil(opts Options, platformOpts gopsutilOptions) (Result, error)
 		return result, err
 	}
 	perCPUAfter, _ := cpu.Times(true)
-	cpuMetrics := metric.ComputeCPUMetrics(cpuBefore[0], cpuAfter[0])
-	if platformOpts.enableIowaitSample {
-		cpuMetrics.Iowait = metric.EndIowaitSample()
-	}
+	iowait := metric.EndIowaitSample()
 
 	netAfter, err := network.ReadCounters()
 	if err != nil {
@@ -116,10 +111,10 @@ func collectGopsutil(opts Options, platformOpts gopsutilOptions) (Result, error)
 		}
 	}
 
-	metrics := serverMetricsFromGopsutil(
+	metrics := buildWindowsServerMetrics(
 		cpuBefore[0], cpuAfter[0],
 		perCPUBefore, perCPUAfter,
-		cpuMetrics.Iowait,
+		iowait,
 	)
 
 	load := loadavg.Read()
@@ -155,4 +150,70 @@ func collectGopsutil(opts Options, platformOpts gopsutilOptions) (Result, error)
 	result.InterfaceMetrics = network.ComputeMetrics(netBefore, netAfter, elapsed)
 	result.DiskMetrics = disk.BuildFromSamples(opts.HasZFS, mounts, beforeIO, afterIO, beforeZFS, afterZFS, zfsRates, elapsed)
 	return result, nil
+}
+
+func buildWindowsServerMetrics(
+	cpuBefore, cpuAfter cpu.TimesStat,
+	perCPUBefore, perCPUAfter []cpu.TimesStat,
+	iowait float64,
+) ingest.ServerMetrics {
+	breakdown := metric.ComputeCPUMetrics(cpuBefore, cpuAfter)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	snap, err := lhm.GetServerMetrics(ctx)
+	if err != nil {
+		warnLHMFallback(err)
+		return serverMetricsFromGopsutil(cpuBefore, cpuAfter, perCPUBefore, perCPUAfter, iowait)
+	}
+
+	metrics := serverMetricsFromLHM(snap)
+	metrics.CPUUserPercent = breakdown.User
+	metrics.CPUSystemPercent = breakdown.System
+	metrics.CPUStealPercent = breakdown.Steal
+	metrics.CPUIowaitPercent = iowait
+
+	applyGopsutilMemoryExtras(&metrics, snap.Memory.Complete())
+	if snap.CPUTotalPercent == nil && breakdown.Total > 0 {
+		metrics.CPUUsage = breakdown.Total
+	}
+	if len(snap.Cores) == 0 {
+		metrics.CPUCoreMetrics = coreMetricsFromGopsutil(metric.ComputePerCoreCPUMetrics(perCPUBefore, perCPUAfter))
+	}
+	if len(snap.Temperatures) == 0 {
+		metrics.TemperatureMetrics = temperatureMetricsFromGopsutil(metric.ReadTemperatures())
+	}
+
+	return metrics
+}
+
+func applyGopsutilMemoryExtras(metrics *ingest.ServerMetrics, memoryComplete bool) {
+	vm, err := mem.VirtualMemory()
+	if err != nil {
+		return
+	}
+	if !memoryComplete {
+		metrics.MemoryUsage = float64(vm.Used)
+		metrics.MemoryAvailable = float64(vm.Available)
+		metrics.MemoryTotal = float64(vm.Total)
+	}
+	metrics.MemoryBuffers = int64(vm.Buffers)
+	metrics.MemoryCached = int64(vm.Cached)
+	metrics.SwapTotal = int64(vm.SwapTotal)
+	metrics.SwapUsed = int64(vm.SwapTotal - vm.SwapFree)
+}
+
+var (
+	lastLHMWarn   time.Time
+	lhmWarnWindow = time.Minute
+)
+
+func warnLHMFallback(err error) {
+	now := time.Now()
+	if now.Sub(lastLHMWarn) < lhmWarnWindow {
+		return
+	}
+	lastLHMWarn = now
+	slog.Warn("lhm helper unavailable, using gopsutil fallback", "err", err)
 }

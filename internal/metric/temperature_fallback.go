@@ -1,4 +1,4 @@
-//go:build !linux && !windows
+//go:build windows
 
 package metric
 
@@ -8,6 +8,7 @@ import (
 	"github.com/shirou/gopsutil/v4/sensors"
 )
 
+// ReadTemperatures uses gopsutil when the LHM helper is unavailable.
 func ReadTemperatures() []TemperatureReading {
 	stats, err := sensors.SensorsTemperatures()
 	if err != nil || len(stats) == 0 {
