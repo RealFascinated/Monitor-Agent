@@ -14,7 +14,6 @@ import (
 	"fascinated.cc/monitor/agent/internal/ingest"
 	"fascinated.cc/monitor/agent/internal/iostats"
 	"fascinated.cc/monitor/agent/internal/lhm"
-	"fascinated.cc/monitor/agent/internal/loadavg"
 	"fascinated.cc/monitor/agent/internal/metric"
 	"fascinated.cc/monitor/agent/internal/network"
 	"fascinated.cc/monitor/agent/internal/sample"
@@ -117,11 +116,6 @@ func collect(opts Options) (Result, error) {
 		perCPUBefore, perCPUAfter,
 		iowait,
 	)
-
-	load := loadavg.Read()
-	metrics.Load1 = load.Load1
-	metrics.Load5 = load.Load5
-	metrics.Load15 = load.Load15
 
 	metrics.ProcessCount, metrics.RunningProcesses = counters.ProcessStats()
 
