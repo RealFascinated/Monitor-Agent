@@ -12,7 +12,7 @@
   <Overview>Monitor Agent pushes host metrics (CPU, memory, network, array disks, ZFS pools, and Docker containers) to your Monitor dashboard.&#xD;&#xD;Requires an ingest token from https://monitor.fascinated.cc&#xD;&#xD;This template runs with host networking, privileged mode, and host /proc mounts so metrics reflect your Unraid server—not only the container. Array shares under /mnt/*, ZFS, and Docker stats are supported when left at the default volume mappings.</Overview>
   <Category>Tools:System</Category>
   <WebUI>https://monitor.fascinated.cc</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/main/unraid/monitor-agent.xml</TemplateURL>
+  <TemplateURL>https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/master/unraid/monitor-agent.xml</TemplateURL>
   <Icon>https://monitor.fascinated.cc/apple-touch-icon.png</Icon>
   <ExtraParams>--pid=host</ExtraParams>
   <PostArgs/>

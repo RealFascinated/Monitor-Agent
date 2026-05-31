@@ -5,7 +5,7 @@ Lightweight host metrics agent for [Monitor](https://monitor.fascinated.cc).
 ## Install (Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/main/install.sh | sudo bash -s -- install YOUR_INGEST_TOKEN
+curl -fsSL https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/master/install.sh | sudo bash -s -- install YOUR_INGEST_TOKEN
 ```
 
 ## Windows
@@ -13,18 +13,20 @@ curl -fsSL https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/main/i
 Run this from an **Administrator PowerShell** to download and install the agent as a background service:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/main/install.ps1 -OutFile install.ps1
-.\install.ps1 install YOUR_INGEST_TOKEN
+Set-ExecutionPolicy Bypass -Scope Process -Force; & ([ScriptBlock]::Create((iwr https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/master/install.ps1 -UseBasicParsing).Content)) install YOUR_INGEST_TOKEN
+```
+
+To uninstall:
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force; & ([ScriptBlock]::Create((iwr https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/master/install.ps1 -UseBasicParsing).Content)) uninstall
 ```
 
 This writes `config.yml` to `%ProgramData%\MonitorAgent`, registers a **monitor-agent** service via [NSSM](https://nssm.cc/), and logs to `agent.log` in the same folder.
 
 > **Note:** The agent must run as Administrator so hardware sensors (including GPU power) can be read.
 
-To uninstall: `.\install.ps1 uninstall`
-
-**Building from source:**
+**Building from source:** (save `install.ps1` locally or use the one-liner above with `-BinaryPath`)
 
 ```powershell
 .\scripts\build-lhm.ps1
@@ -84,7 +86,7 @@ Install the Docker template on Unraid:
 
 ```bash
 wget -O /boot/config/plugins/dockerMan/templates-user/monitor-agent.xml \
-  https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/main/unraid/monitor-agent.xml
+  https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/master/unraid/monitor-agent.xml
 ```
 
 Then open **Docker → Add Container**, choose **monitor-agent**, enter your **Ingest Token**, and apply. Defaults mount the host `/proc`, `/sys`, `/dev`, array root at `/host`, and the Docker socket for full metrics on Unraid (including `/mnt/*` shares and ZFS).

@@ -4,6 +4,9 @@
   Install or remove the Monitor agent on Windows.
 
 .EXAMPLE
+  Set-ExecutionPolicy Bypass -Scope Process -Force; & ([ScriptBlock]::Create((iwr https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/master/install.ps1 -UseBasicParsing).Content)) install YOUR_INGEST_TOKEN
+
+.EXAMPLE
   .\install.ps1 install YOUR_INGEST_TOKEN
 
 .EXAMPLE
@@ -52,6 +55,7 @@ Options (install):
   -ServiceName NAME      Windows service name (default: monitor-agent)
 
 Examples:
+  Set-ExecutionPolicy Bypass -Scope Process -Force; & ([ScriptBlock]::Create((iwr https://raw.githubusercontent.com/RealFascinated/Monitor-Agent/master/install.ps1 -UseBasicParsing).Content)) install YOUR_INGEST_TOKEN
   .\install.ps1 install YOUR_INGEST_TOKEN
   .\install.ps1 install YOUR_INGEST_TOKEN -BinaryPath .\monitor-agent.exe
   .\install.ps1 uninstall
