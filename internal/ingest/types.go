@@ -45,6 +45,7 @@ type ServerMetrics struct {
 	CPUSystemPercent         float64 `json:"cpuSystemPercent"`
 	CPUIowaitPercent         float64 `json:"cpuIowaitPercent"`
 	CPUStealPercent          float64 `json:"cpuStealPercent"`
+	CPUPowerWatts            float64 `json:"cpuPowerWatts,omitempty"`
 	MemoryBuffers            int64   `json:"memoryBuffers"`
 	MemoryCached             int64   `json:"memoryCached"`
 	SwapUsed                 int64   `json:"swapUsed"`

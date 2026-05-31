@@ -56,6 +56,7 @@ func collect(opts Options) (Result, error) {
 	diskstatsBefore := linux.ReadDiskstats()
 	cgroupIOBefore := linux.ReadIOStats()
 	procBefore := linux.ReadProcStat()
+	powerBefore, powerMaxBefore, hasPowerBefore := linux.ReadCPUPackageEnergyMicrojoules()
 
 	netBefore, err := network.ReadCounters()
 	if err != nil {
@@ -82,6 +83,17 @@ func collect(opts Options) (Result, error) {
 		metrics.CPUCoreMetrics = coreMetricsFromLinux(linux.ComputePerCoreCPU(procBefore.PerCPU, procAfter.PerCPU))
 	}
 	metrics.TemperatureMetrics = temperatureMetricsFromLinux(linux.ReadTemperatures())
+	if hasPowerBefore {
+		if powerAfter, powerMaxAfter, ok := linux.ReadCPUPackageEnergyMicrojoules(); ok {
+			maxEnergy := powerMaxAfter
+			if maxEnergy == 0 {
+				maxEnergy = powerMaxBefore
+			}
+			if watts, ok := linux.ComputeCPUPowerWatts(powerBefore, powerAfter, maxEnergy, elapsed); ok {
+				metrics.CPUPowerWatts = watts
+			}
+		}
+	}
 	if hasCgroupCPU {
 		if afterUsage, ok := linux.ReadCPUUsageUsec(cgroup); ok {
 			if usage, ok := linux.ComputeCPUUsage(cgroupCPUBefore, afterUsage, cgroup, elapsed); ok {

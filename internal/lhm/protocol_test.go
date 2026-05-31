@@ -9,6 +9,7 @@ import (
 func TestParseServerMetricsJSON(t *testing.T) {
 	raw := `{
 		"cpuTotalPercent": 11.5,
+		"cpuPowerWatts": 42.5,
 		"cores": [{"cpu":"0","usagePercent":40},{"cpu":"1","usagePercent":5}],
 		"memory": {"used":100,"available":50,"total":150},
 		"temperatures": [{"sensor":"cpu_die","celsius":46.9}]
@@ -19,6 +20,9 @@ func TestParseServerMetricsJSON(t *testing.T) {
 	}
 	if snap.CPUTotalPercent == nil || *snap.CPUTotalPercent != 11.5 {
 		t.Fatalf("cpu total: %+v", snap.CPUTotalPercent)
+	}
+	if snap.CPUPowerWatts == nil || *snap.CPUPowerWatts != 42.5 {
+		t.Fatalf("cpu power: %+v", snap.CPUPowerWatts)
 	}
 	if len(snap.Cores) != 2 || snap.Cores[0].CPU != "0" {
 		t.Fatalf("cores: %+v", snap.Cores)
@@ -31,6 +35,9 @@ func TestParseServerMetricsJSON(t *testing.T) {
 	ApplyServerSnapshot(&metrics, snap)
 	if metrics.CPUUsage != 11.5 {
 		t.Fatalf("cpu usage: %v", metrics.CPUUsage)
+	}
+	if metrics.CPUPowerWatts != 42.5 {
+		t.Fatalf("cpu power watts: %v", metrics.CPUPowerWatts)
 	}
 	if len(metrics.CPUCoreMetrics) != 2 {
 		t.Fatalf("core metrics: %+v", metrics.CPUCoreMetrics)

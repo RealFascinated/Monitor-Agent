@@ -25,6 +25,7 @@ internal sealed class UpdateVisitor : IVisitor
 internal sealed class ServerMetricsSnapshot
 {
     public double? CpuTotalPercent;
+    public double? CpuPowerWatts;
     public List<CoreEntry> Cores = new();
     public MemoryEntry Memory = new();
     public List<TemperatureEntry> Temperatures = new();
@@ -100,6 +101,9 @@ internal static class Program
         if (!snapshot.CpuTotalPercent.HasValue && coreLoads.Count > 0)
             snapshot.CpuTotalPercent = coreLoads.Values.Average();
 
+        if (snapshot.CpuPowerWatts.HasValue && snapshot.CpuPowerWatts.Value < 0)
+            snapshot.CpuPowerWatts = null;
+
         foreach (var kv in coreLoads)
         {
             snapshot.Cores.Add(new CoreEntry
@@ -133,6 +137,13 @@ internal static class Program
                     Sensor = TemperatureSensorKey(hardware, sensor),
                     Celsius = value,
                 });
+                continue;
+            }
+
+            if (hardware.HardwareType == HardwareType.Cpu && sensor.SensorType == SensorType.Power)
+            {
+                if (IsPackagePower(sensor.Name))
+                    snapshot.CpuPowerWatts = (snapshot.CpuPowerWatts ?? 0) + value;
                 continue;
             }
 
@@ -214,6 +225,28 @@ internal static class Program
         return false;
     }
 
+    static bool IsPackagePower(string name)
+    {
+        if (name.Contains("Core", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Contains("DRAM", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Contains("GT ", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Contains("Graphics", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Contains("SOC", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("Package", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (name.Equals("Package", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (name.Contains("Package", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (name.Equals("CPU Power", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return false;
+    }
+
     static bool IsReportedTemperature(string name, float celsius)
     {
         if (celsius <= 0)
@@ -245,6 +278,9 @@ internal static class Program
 
         sb.Append("\"cpuTotalPercent\":");
         AppendNullableDouble(sb, s.CpuTotalPercent);
+
+        sb.Append(",\"cpuPowerWatts\":");
+        AppendNullableDouble(sb, s.CpuPowerWatts);
 
         sb.Append(",\"cores\":[");
         for (var i = 0; i < s.Cores.Count; i++)

@@ -9,6 +9,7 @@ import (
 
 type serverMetricsJSON struct {
 	CPUTotalPercent *float64            `json:"cpuTotalPercent"`
+	CPUPowerWatts   *float64            `json:"cpuPowerWatts"`
 	Cores           []coreMetricJSON    `json:"cores"`
 	Memory          memoryMetricJSON    `json:"memory"`
 	Temperatures    []temperatureJSON   `json:"temperatures"`
@@ -33,6 +34,7 @@ type temperatureJSON struct {
 // ServerSnapshot is a parsed LHM helper response.
 type ServerSnapshot struct {
 	CPUTotalPercent *float64
+	CPUPowerWatts   *float64
 	Cores           []ingest.CPUCoreMetric
 	Memory          MemorySnapshot
 	Temperatures    []ingest.TemperatureMetric
@@ -60,6 +62,7 @@ func ParseServerMetricsJSON(data []byte) (ServerSnapshot, error) {
 func snapshotFromJSON(raw serverMetricsJSON) ServerSnapshot {
 	snap := ServerSnapshot{
 		CPUTotalPercent: raw.CPUTotalPercent,
+		CPUPowerWatts:   raw.CPUPowerWatts,
 		Memory: MemorySnapshot{
 			Used:      raw.Memory.Used,
 			Available: raw.Memory.Available,
@@ -91,6 +94,9 @@ func snapshotFromJSON(raw serverMetricsJSON) ServerSnapshot {
 func ApplyServerSnapshot(metrics *ingest.ServerMetrics, snap ServerSnapshot) {
 	if snap.CPUTotalPercent != nil {
 		metrics.CPUUsage = *snap.CPUTotalPercent
+	}
+	if snap.CPUPowerWatts != nil {
+		metrics.CPUPowerWatts = *snap.CPUPowerWatts
 	}
 	if len(snap.Cores) > 0 {
 		metrics.CPUCoreMetrics = snap.Cores
