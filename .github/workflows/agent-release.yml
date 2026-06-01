@@ -18,7 +18,7 @@ env:
   BINARY_NAME: monitor-agent
 
 jobs:
-  release:
+  build-linux:
     runs-on: ubuntu-latest
 
     steps:
@@ -135,7 +135,7 @@ jobs:
           path: dist/monitor-agent-windows-amd64.exe
 
   publish:
-    needs: [release, build-windows]
+    needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
