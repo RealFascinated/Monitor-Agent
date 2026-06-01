@@ -5,6 +5,7 @@ package collector
 import (
 	"time"
 
+	"fascinated.cc/monitor/agent/internal/connections"
 	"fascinated.cc/monitor/agent/internal/cpu"
 	"fascinated.cc/monitor/agent/internal/delta"
 	"fascinated.cc/monitor/agent/internal/disk"
@@ -184,6 +185,8 @@ func collect(opts Options) (Result, error) {
 	if opts.EnableGPU {
 		result.GPUMetrics = gpupkg.Collect()
 	}
+
+	result.TCPConnectionMetrics = connections.Read().ToIngest()
 
 	result.ServerMetrics = metrics
 	return result, nil

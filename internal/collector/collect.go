@@ -10,8 +10,9 @@ type Result struct {
 	DiskMetrics      []ingest.DiskMetric
 	ZfsArcMetrics    *ingest.ZFSArcMetrics
 	ZfsPoolMetrics   []ingest.ZfsPoolMetric
-	DockerContainers []ingest.DockerContainerMetric
-	GPUMetrics       []ingest.GPUMetric
+	DockerContainers     []ingest.DockerContainerMetric
+	GPUMetrics           []ingest.GPUMetric
+	TCPConnectionMetrics []ingest.TCPConnectionMetric
 }
 
 func Collect(opts Options) (Result, error) {

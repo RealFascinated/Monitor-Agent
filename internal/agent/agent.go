@@ -161,8 +161,9 @@ func (a *Agent) pushOnce() {
 		InterfaceMetrics: sample.InterfaceMetrics,
 		DiskMetrics:      sample.DiskMetrics,
 		ZfsPoolMetrics:   sample.ZfsPoolMetrics,
-		DockerContainers: sample.DockerContainers,
-		GPUMetrics:       sample.GPUMetrics,
+		DockerContainers:     sample.DockerContainers,
+		GPUMetrics:           sample.GPUMetrics,
+		TCPConnectionMetrics: sample.TCPConnectionMetrics,
 	}
 
 	if config.PrintMode {

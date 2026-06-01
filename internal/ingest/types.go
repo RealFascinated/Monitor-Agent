@@ -8,8 +8,9 @@ type Data struct {
 	DiskMetrics      []DiskMetric            `json:"diskMetrics"`
 	ZfsArcMetrics    *ZFSArcMetrics          `json:"zfsArcMetrics,omitempty"`
 	ZfsPoolMetrics   []ZfsPoolMetric         `json:"zfsPoolMetrics,omitempty"`
-	DockerContainers []DockerContainerMetric `json:"dockerContainers,omitempty"`
-	GPUMetrics       []GPUMetric             `json:"gpuMetrics,omitempty"`
+	DockerContainers     []DockerContainerMetric `json:"dockerContainers,omitempty"`
+	GPUMetrics           []GPUMetric             `json:"gpuMetrics,omitempty"`
+	TCPConnectionMetrics []TCPConnectionMetric   `json:"tcpConnectionMetrics,omitempty"`
 }
 
 type GPUMetric struct {
@@ -43,6 +44,11 @@ type CPUCoreMetric struct {
 type TemperatureMetric struct {
 	Sensor  string  `json:"sensor"`
 	Celsius float64 `json:"celsius"`
+}
+
+type TCPConnectionMetric struct {
+	State string `json:"state"`
+	Count int64  `json:"count"`
 }
 
 type ServerMetrics struct {
