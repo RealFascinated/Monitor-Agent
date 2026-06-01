@@ -136,7 +136,7 @@ func TestReadHwmonNVMeTemperatures(t *testing.T) {
 
 	t.Setenv("MONITOR_HOST_ROOT", root)
 	readings := readHwmonTemperatures()
-	if len(readings) != 2 {
+	if len(readings) != 3 {
 		t.Fatalf("readings = %+v", readings)
 	}
 	bySensor := map[string]float64{}
@@ -149,17 +149,8 @@ func TestReadHwmonNVMeTemperatures(t *testing.T) {
 	if bySensor["nvme1/Composite"] < 46 || bySensor["nvme1/Composite"] > 48 {
 		t.Fatalf("nvme1 temp = %v", bySensor["nvme1/Composite"])
 	}
-}
-
-func TestNVMeSkipsRedundantDieSensors(t *testing.T) {
-	if shouldReportHwmonTemperature("nvme", "Composite") != true {
-		t.Fatal("expected Composite to be reported")
-	}
-	if shouldReportHwmonTemperature("nvme", "Sensor 1") != false {
-		t.Fatal("expected Sensor 1 to be skipped for nvme")
-	}
-	if shouldReportHwmonTemperature("k10temp", "Sensor 1") != true {
-		t.Fatal("expected cpu hwmon sensors to be reported")
+	if bySensor["nvme1/Sensor 1"] < 46 || bySensor["nvme1/Sensor 1"] > 48 {
+		t.Fatalf("nvme1 Sensor 1 temp = %v", bySensor["nvme1/Sensor 1"])
 	}
 }
 

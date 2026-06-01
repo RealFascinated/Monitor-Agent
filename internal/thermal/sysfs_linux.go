@@ -92,9 +92,6 @@ func readHwmonTemperatures() []TemperatureReading {
 
 		hwmonDir := hwmonRootDir(dir)
 		hwName := readTrimmedFile(filepath.Join(hwmonDir, "name"))
-		if !shouldReportHwmonTemperature(hwName, label) {
-			continue
-		}
 
 		celsius, ok := readTemperatureFile(inputPath)
 		if !ok {
@@ -223,15 +220,6 @@ func isReportedTemperatureLabel(label string) bool {
 		return false
 	}
 	return true
-}
-
-// shouldReportHwmonTemperature filters redundant NVMe die sensors. The dashboard
-// only surfaces a handful of temperature series; Composite is the standard drive temp.
-func shouldReportHwmonTemperature(hwName, label string) bool {
-	if hwName != "nvme" {
-		return true
-	}
-	return strings.EqualFold(strings.TrimSpace(label), "Composite")
 }
 
 func readTemperatureFile(path string) (float64, bool) {
