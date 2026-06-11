@@ -28,13 +28,16 @@ func amdgpuDeviceName(deviceDir string) string {
 	amdgpuIDsOnce.Do(func() {
 		amdgpuIDs = loadAmdgpuIDs(linux.HostPath(amdgpuIDsPath))
 	})
+	return lookupAmdgpuName(deviceID, revisionID, amdgpuIDs)
+}
 
+func lookupAmdgpuName(deviceID, revisionID string, names map[string]string) string {
 	if revisionID != "" {
-		if name := amdgpuIDs[deviceID+":"+revisionID]; name != "" {
+		if name := names[deviceID+":"+revisionID]; name != "" {
 			return name
 		}
 	}
-	return amdgpuIDs[deviceID]
+	return names[deviceID]
 }
 
 func loadAmdgpuIDs(path string) map[string]string {

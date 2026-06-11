@@ -41,8 +41,6 @@ func TestMdDeviceHasDiskstatsIO(t *testing.T) {
 }
 
 func TestResolveMDSlaveDiskstatsNames(t *testing.T) {
-	t.Parallel()
-
 	root := t.TempDir()
 	mdDir := filepath.Join(root, "sys", "block", "md3", "slaves")
 	if err := os.MkdirAll(mdDir, 0o755); err != nil {
@@ -65,8 +63,6 @@ func TestResolveMDSlaveDiskstatsNames(t *testing.T) {
 }
 
 func TestLookupDiskstatsDeltaMDUsesSlaves(t *testing.T) {
-	t.Parallel()
-
 	root := t.TempDir()
 	mdDir := filepath.Join(root, "sys", "block", "md3", "slaves")
 	if err := os.MkdirAll(mdDir, 0o755); err != nil {

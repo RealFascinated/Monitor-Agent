@@ -59,15 +59,14 @@ func parseLspciLine(line string) (slot, name string) {
 		return "", ""
 	}
 	rest := desc[colonBracket+3:]
-
+	if i := strings.LastIndex(rest, " (rev "); i >= 0 {
+		rest = strings.TrimSpace(rest[:i])
+	}
 	if i := strings.LastIndex(rest, " ["); i >= 0 {
 		bracket := rest[i+2:]
 		if strings.Contains(bracket, ":") && strings.HasSuffix(strings.TrimSpace(bracket), "]") {
 			rest = strings.TrimSpace(rest[:i])
 		}
-	}
-	if i := strings.LastIndex(rest, " (rev "); i >= 0 {
-		rest = strings.TrimSpace(rest[:i])
 	}
 	return slot, rest
 }
