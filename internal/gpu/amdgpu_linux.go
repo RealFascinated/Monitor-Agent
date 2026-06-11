@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"fascinated.cc/monitor/agent/internal/linux"
 )
 
 const amdgpuIDsPath = "/usr/share/libdrm/amdgpu.ids"
@@ -19,14 +18,14 @@ var (
 )
 
 func amdgpuDeviceName(deviceDir string) string {
-	deviceID := pciIDHex(filepath.Join(deviceDir, "device"))
+	deviceID := pciIDHex(readTrimmed(filepath.Join(deviceDir, "device")))
 	if deviceID == "" {
 		return ""
 	}
-	revisionID := pciIDHex(filepath.Join(deviceDir, "revision"))
+	revisionID := pciIDHex(readTrimmed(filepath.Join(deviceDir, "revision")))
 
 	amdgpuIDsOnce.Do(func() {
-		amdgpuIDs = loadAmdgpuIDs(linux.HostPath(amdgpuIDsPath))
+		amdgpuIDs = loadAmdgpuIDs(amdgpuIDsPath)
 	})
 	return lookupAmdgpuName(deviceID, revisionID, amdgpuIDs)
 }
