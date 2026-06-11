@@ -80,21 +80,26 @@ func blockDeviceInDiskstats(name string, diskstats map[string]DiskstatsEntry) st
 	if name == "" {
 		return ""
 	}
+	if parent := diskstatsParentName(name); parent != "" {
+		if _, ok := diskstats[parent]; ok {
+			return parent
+		}
+	}
 	if _, ok := diskstats[name]; ok {
 		return name
 	}
+	return ""
+}
+
+func diskstatsParentName(name string) string {
 	if nvmePartPattern.MatchString(name) {
 		if parent := nvmePartPattern.FindStringSubmatch(name); len(parent) == 2 {
-			if _, ok := diskstats[parent[1]]; ok {
-				return parent[1]
-			}
+			return parent[1]
 		}
 	}
 	if sdPartPattern.MatchString(name) {
 		if parent := sdPartPattern.FindStringSubmatch(name); len(parent) == 2 {
-			if _, ok := diskstats[parent[1]]; ok {
-				return parent[1]
-			}
+			return parent[1]
 		}
 	}
 	return ""

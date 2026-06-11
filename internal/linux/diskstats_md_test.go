@@ -60,6 +60,11 @@ func TestResolveMDSlaveDiskstatsNames(t *testing.T) {
 	if len(got) != 1 || got[0] != "sdc" {
 		t.Fatalf("resolveMDSlaveDiskstatsNames() = %v, want [sdc]", got)
 	}
+
+	got = resolveMDSlaveDiskstatsNames("md3", map[string]DiskstatsEntry{"sdc1": {}})
+	if len(got) != 1 || got[0] != "sdc1" {
+		t.Fatalf("partition-only diskstats = %v, want [sdc1]", got)
+	}
 }
 
 func TestLookupDiskstatsDeltaMDUsesSlaves(t *testing.T) {
