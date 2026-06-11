@@ -63,7 +63,7 @@ func collectDRM() []ingest.GPUMetric {
 		metric := ingest.GPUMetric{
 			DeviceID: ingest.HashDeviceID(rawID),
 			Vendor:   vendorName,
-			Name:     drmDeviceName(deviceDir, entry.Name()),
+			Name:     drmDeviceName(deviceDir, entry.Name(), rawID, vendorName),
 		}
 
 		if usage, ok := readGPUUsage(deviceDir, vendorName); ok {
@@ -203,11 +203,19 @@ func readUeventValue(path, key string) string {
 	return ""
 }
 
-func drmDeviceName(deviceDir, cardName string) string {
+func drmDeviceName(deviceDir, cardName, pciSlot, vendor string) string {
 	if name := readTrimmed(filepath.Join(deviceDir, "product_name")); name != "" {
 		return name
 	}
 	if name := readTrimmed(filepath.Join(deviceDir, "product_number")); name != "" {
+		return name
+	}
+	if vendor == "amd" {
+		if name := amdgpuDeviceName(deviceDir); name != "" {
+			return name
+		}
+	}
+	if name := pciDeviceName(pciSlot); name != "" {
 		return name
 	}
 	return cardName
