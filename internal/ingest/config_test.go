@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseLogLevel(t *testing.T) {
@@ -26,6 +27,20 @@ func TestParseLogLevel(t *testing.T) {
 		if got := ParseLogLevel(tc.input); got != tc.want {
 			t.Fatalf("ParseLogLevel(%q): got %v, want %v", tc.input, got, tc.want)
 		}
+	}
+}
+
+func TestResolveDuration(t *testing.T) {
+	d, err := resolveDuration("5s", time.Second, "sample_interval")
+	if err != nil || d != 5*time.Second {
+		t.Fatalf("got %v err=%v", d, err)
+	}
+	d, err = resolveDuration("", 30*time.Second, "slow_metrics_interval")
+	if err != nil || d != 30*time.Second {
+		t.Fatalf("fallback: got %v err=%v", d, err)
+	}
+	if _, err = resolveDuration("nope", time.Second, "sample_interval"); err == nil {
+		t.Fatal("expected parse error")
 	}
 }
 

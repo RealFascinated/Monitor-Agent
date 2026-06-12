@@ -50,7 +50,8 @@ Each YAML key maps to an environment variable: `MONITOR_` + the key in uppercase
 | `push_schedule` | `*/15 * * * * *` | Cron with seconds (6 fields) |
 | `enable_docker` | `true` | Docker container stats (Linux) |
 | `enable_gpu` | `true` | GPU metrics collection |
-| `print_mode` | `false` | Print JSON to stdout instead of pushing |
+| `sample_interval` | `1s` | Fast sampler tick interval |
+| `slow_metrics_interval` | `30s` | Docker / GPU / ZFS status refresh interval |
 
 Other runtime variables: `MONITOR_HOST_ROOT` (host root bind mount prefix for disk metrics in containers), `MONITOR_LOG_LEVEL` (`debug`, `info`, `warn`, `error`).
 
@@ -58,7 +59,7 @@ Boolean config env vars accept `true`/`false`, `1`/`0`, `yes`/`no`, or `on`/`off
 
 If `config.yml` is missing and `MONITOR_CONFIG_FILE` is not set, the agent starts using environment variables only. If `MONITOR_CONFIG_FILE` points at a path, that file must exist.
 
-### Print mode (debug)
+### Print one payload (debug)
 
 Print one metrics payload as indented JSON to stdout (no ingest token required):
 
@@ -66,7 +67,7 @@ Print one metrics payload as indented JSON to stdout (no ingest token required):
 ./monitor-agent print
 ```
 
-Or set `print_mode: true` / `MONITOR_PRINT_MODE=true` in config. Logs still go to stderr.
+Logs still go to stderr.
 
 ## GPU metrics
 

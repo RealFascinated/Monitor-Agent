@@ -189,15 +189,35 @@ function Install-AgentBinary([string]$Version, [string]$Destination) {
     Copy-Item -Path $staging -Destination $Destination -Force
 }
 
-function Write-AgentConfig([string]$Path) {
+function Get-ConfigTemplatePath([string]$Version, [string]$Destination) {
+    $local = Join-Path $PSScriptRoot 'config-example.yml'
+    if (Test-Path $local) {
+        Copy-Item -Path $local -Destination $Destination -Force
+        return
+    }
+
+    $tag = "agent/v$Version"
+    $baseUrl = "https://github.com/$GitHubRepo/releases/download/$tag"
+    Write-Log "Downloading config-example.yml ($tag)"
+    try {
+        Invoke-WebRequest -Uri "$baseUrl/config-example.yml" -OutFile $Destination
+        return
+    } catch {
+        Write-Log 'config-example.yml not in release, using main branch template'
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$GitHubRepo/master/config-example.yml" -OutFile $Destination
+    }
+}
+
+function Write-AgentConfig([string]$Path, [string]$TemplatePath) {
+    if (-not (Test-Path $TemplatePath)) {
+        throw "config template not found: $TemplatePath"
+    }
+
     $token = Escape-YamlString $IngestToken
     $endpoint = Escape-YamlString $ApiEndpoint
-    $content = @"
-ingest_token: "$token"
-api_endpoint: "$endpoint"
-push_schedule: "*/15 * * * * *"
-enable_docker: false
-"@
+    $content = Get-Content -Raw -Path $TemplatePath
+    $content = $content -replace '(?m)^ingest_token:.*', "ingest_token: `"$token`""
+    $content = $content -replace '(?m)^api_endpoint:.*', "api_endpoint: `"$endpoint`""
     $utf8 = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText($Path, $content, $utf8)
 }
@@ -309,8 +329,11 @@ function Install-MonitorAgent {
 
     Stop-MonitorAgentService -Nssm $nssmPath
     Install-AgentBinary -Version $Version -Destination $exe
+    $configTemplate = Join-Path $InstallDir 'config-example.yml'
+    Get-ConfigTemplatePath -Version $Version -Destination $configTemplate
+
     Write-Log "Writing config to $config"
-    Write-AgentConfig -Path $config
+    Write-AgentConfig -Path $config -TemplatePath $configTemplate
 
     $nssm = Get-NssmExe -ToolsDir $toolsDir
     Install-Service -Nssm $nssm -Exe $exe -Dir $InstallDir -LogFile $log -ConfigFile $config

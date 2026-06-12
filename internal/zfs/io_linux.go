@@ -4,14 +4,10 @@ package zfs
 
 import (
 	"bufio"
-	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"fascinated.cc/monitor/agent/internal/iostats"
 )
 
 func ReadPoolIOSnapshots() map[string]PoolIO {
@@ -54,50 +50,6 @@ func parsePoolIO(path string) (PoolIO, error) {
 		}
 	}
 	return io, scanner.Err()
-}
-
-func StartPoolIostatSample() func() map[string]PoolIORates {
-	if _, err := exec.LookPath("zpool"); err != nil {
-		return func() map[string]PoolIORates {
-			return map[string]PoolIORates{}
-		}
-	}
-
-	done := make(chan map[string]PoolIORates, 1)
-	go func() {
-		out, err := exec.Command("zpool", "iostat", "-yqHp", "1", "1").Output()
-		if err != nil {
-			done <- map[string]PoolIORates{}
-			return
-		}
-		done <- parsePoolIostatOutput(out)
-	}()
-
-	return func() map[string]PoolIORates {
-		return <-done
-	}
-}
-
-func parsePoolIostatOutput(out []byte) map[string]PoolIORates {
-	rates := make(map[string]PoolIORates)
-	scanner := bufio.NewScanner(bytes.NewReader(out))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 7 || strings.HasPrefix(fields[0], "/") {
-			continue
-		}
-		rates[fields[0]] = PoolIORates{
-			ReadIops:            iostats.Uint64ToInt64(parseUint64(fields[3])),
-			WriteIops:           iostats.Uint64ToInt64(parseUint64(fields[4])),
-			ReadBytesPerSecond:  iostats.Uint64ToInt64(parseUint64(fields[5])),
-			WriteBytesPerSecond: iostats.Uint64ToInt64(parseUint64(fields[6])),
-		}
-	}
-	return rates
 }
 
 func parseUint64(value string) uint64 {

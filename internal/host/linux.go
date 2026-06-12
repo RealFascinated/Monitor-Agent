@@ -143,11 +143,6 @@ func linuxCoreCount(lscpu map[string]string) int {
 }
 
 func linuxThreadCount() int {
-	if out, err := exec.Command("nproc").Output(); err == nil {
-		if n, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil && n > 0 {
-			return n
-		}
-	}
 	if count := runtime.NumCPU(); count > 0 {
 		return count
 	}

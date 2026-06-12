@@ -1,7 +1,8 @@
 # Optional. All settings can be set with environment variables instead (see README).
 ingest_token: ""
 api_endpoint: "https://monitor.fascinated.cc/api/v1/servers/ingest"
-push_schedule: "*/15 * * * * *"
+push_schedule: "*/5 * * * * *"
+sample_interval: "1s"
+slow_metrics_interval: "30s"
 enable_docker: true
 enable_gpu: true
-# print_mode: false  # emit JSON to stdout instead of pushing (ingest_token not required)

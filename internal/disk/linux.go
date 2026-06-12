@@ -7,9 +7,19 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"fascinated.cc/monitor/agent/internal/linux"
+)
+
+const mountCacheTTL = 30 * time.Second
+
+var (
+	mountCacheMu sync.Mutex
+	mountCache   []Mount
+	mountCacheAt time.Time
 )
 
 var (
@@ -31,6 +41,14 @@ type mountEntry struct {
 }
 
 func ListMounts() ([]Mount, error) {
+	mountCacheMu.Lock()
+	if !mountCacheAt.IsZero() && time.Since(mountCacheAt) < mountCacheTTL {
+		cached := append([]Mount(nil), mountCache...)
+		mountCacheMu.Unlock()
+		return cached, nil
+	}
+	mountCacheMu.Unlock()
+
 	entries, err := readMountEntries()
 	if err != nil {
 		return nil, err
@@ -64,7 +82,14 @@ func ListMounts() ([]Mount, error) {
 		})
 	}
 
-	return dedupeMountsByUsage(mounts), nil
+	mounts = dedupeMountsByUsage(mounts)
+
+	mountCacheMu.Lock()
+	mountCache = append([]Mount(nil), mounts...)
+	mountCacheAt = time.Now()
+	mountCacheMu.Unlock()
+
+	return mounts, nil
 }
 
 func readMountEntries() ([]mountEntry, error) {

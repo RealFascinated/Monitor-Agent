@@ -23,6 +23,8 @@ type Agent struct {
 	ServerDetails ingest.ServerDetails
 	HasZFS        bool
 
+	sampler *collector.Sampler
+
 	configMu sync.RWMutex
 	cronMu   sync.Mutex
 	cron     *cron.Cron
@@ -44,6 +46,8 @@ func New(config *Config, version string) *Agent {
 }
 
 func (a *Agent) Run(ctx context.Context) {
+	a.refreshSampler()
+
 	schedule := a.pushSchedule()
 	if err := a.startCron(schedule); err != nil {
 		slog.Error("start push schedule", "schedule", schedule, "err", err)
@@ -51,7 +55,14 @@ func (a *Agent) Run(ctx context.Context) {
 	}
 	defer a.stopCron()
 
-	slog.Info("agent started", "schedule", schedule)
+	sampleInterval := a.sampleInterval()
+	slowInterval := a.slowMetricsInterval()
+
+	slog.Info("agent started", "schedule", schedule, "sample_interval", sampleInterval, "slow_metrics_interval", slowInterval)
+
+	go a.runSampleLoop(ctx, sampleInterval)
+	go a.runSlowLoop(ctx, slowInterval)
+	a.sampler.WaitReady(3 * sampleInterval)
 	a.pushOnce()
 
 	reloadCh := reloadSignal()
@@ -70,7 +81,11 @@ func (a *Agent) Run(ctx context.Context) {
 			a.configMu.Lock()
 			a.Config = config
 			schedule = config.PushSchedule
+			sampleInterval = config.SampleInterval
+			slowInterval = config.SlowMetricsInterval
 			a.configMu.Unlock()
+
+			a.refreshSampler()
 
 			if err := a.startCron(schedule); err != nil {
 				slog.Warn("reload push schedule", "schedule", schedule, "err", err)
@@ -81,10 +96,79 @@ func (a *Agent) Run(ctx context.Context) {
 	}
 }
 
+func (a *Agent) refreshSampler() {
+	config := a.currentConfig()
+	a.HasZFS = zfs.Available()
+	a.sampler = collector.NewSampler(collector.Options{
+		HasZFS:       a.HasZFS,
+		EnableDocker: config.EnableDocker,
+		EnableGPU:    config.EnableGPU,
+	})
+}
+
+func (a *Agent) runSampleLoop(ctx context.Context, _ time.Duration) {
+	for {
+		interval := a.sampleInterval()
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			if a.sampler == nil {
+				continue
+			}
+			if err := a.sampler.Tick(); err != nil {
+				slog.Warn("sample tick", "err", err)
+			}
+		}
+	}
+}
+
+func (a *Agent) runSlowLoop(ctx context.Context, _ time.Duration) {
+	if a.sampler != nil {
+		_ = a.sampler.RefreshSlow()
+	}
+
+	for {
+		interval := a.slowMetricsInterval()
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+			if a.sampler == nil {
+				continue
+			}
+			if err := a.sampler.RefreshSlow(); err != nil {
+				slog.Warn("slow metrics refresh", "err", err)
+			}
+			if mhz, err := cpu.GetClockSpeedMHz(); err != nil {
+				slog.Warn("cpu clock speed unavailable", "err", err)
+			} else {
+				a.ServerDetails.CPUClockMhz = mhz
+			}
+		}
+	}
+}
+
 func (a *Agent) pushSchedule() string {
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
 	return a.Config.PushSchedule
+}
+
+func (a *Agent) sampleInterval() time.Duration {
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	return a.Config.SampleInterval
+}
+
+func (a *Agent) slowMetricsInterval() time.Duration {
+	a.configMu.RLock()
+	defer a.configMu.RUnlock()
+	return a.Config.SlowMetricsInterval
 }
 
 func (a *Agent) startCron(schedule string) error {
@@ -96,7 +180,10 @@ func (a *Agent) startCron(schedule string) error {
 		<-stopCtx.Done()
 	}
 
-	c := cron.New(cron.WithSeconds())
+	c := cron.New(
+		cron.WithSeconds(),
+		cron.WithChain(cron.SkipIfStillRunning(cron.DiscardLogger)),
+	)
 	if _, err := c.AddFunc(schedule, a.pushOnce); err != nil {
 		return err
 	}
@@ -127,52 +214,36 @@ func (a *Agent) pushOnce() {
 	config := a.currentConfig()
 	collectStart := time.Now()
 
-	a.HasZFS = zfs.Available()
-
 	if uptime, err := host.UptimeSeconds(); err != nil {
 		slog.Warn("uptime unavailable", "err", err)
 	} else {
 		a.ServerDetails.UptimeSeconds = uptime
 	}
 
-	if mhz, err := cpu.GetClockSpeedMHz(); err != nil {
-		slog.Warn("cpu clock speed unavailable", "err", err)
-	} else {
-		a.ServerDetails.CPUClockMhz = mhz
-	}
-
 	a.ServerDetails.Ip = host.GetIP()
 
-	sample, err := collector.Collect(collector.Options{
-		HasZFS:       a.HasZFS,
-		EnableDocker: config.EnableDocker,
-		EnableGPU:    config.EnableGPU,
-	})
-	if err != nil {
-		slog.Error("collect metrics", "err", err)
+	if a.sampler == nil {
+		slog.Error("collect metrics", "err", "sampler not initialized")
+		return
+	}
+
+	sample := a.sampler.Snapshot()
+	if !a.sampler.Ready() {
+		slog.Warn("metrics not ready, skipping push")
 		return
 	}
 
 	data := ingest.Data{
-		AgentVersion:     a.Version,
-		ServerDetails:    a.ServerDetails,
-		ServerMetrics:    sample.ServerMetrics,
-		ZfsArcMetrics:    sample.ZfsArcMetrics,
-		InterfaceMetrics: sample.InterfaceMetrics,
-		DiskMetrics:      sample.DiskMetrics,
-		ZfsPoolMetrics:   sample.ZfsPoolMetrics,
+		AgentVersion:         a.Version,
+		ServerDetails:        a.ServerDetails,
+		ServerMetrics:        sample.ServerMetrics,
+		ZfsArcMetrics:        sample.ZfsArcMetrics,
+		InterfaceMetrics:     sample.InterfaceMetrics,
+		DiskMetrics:          sample.DiskMetrics,
+		ZfsPoolMetrics:       sample.ZfsPoolMetrics,
 		DockerContainers:     sample.DockerContainers,
 		GPUMetrics:           sample.GPUMetrics,
 		TCPConnectionMetrics: sample.TCPConnectionMetrics,
-	}
-
-	if config.PrintMode {
-		if err := ingest.Print(data); err != nil {
-			slog.Error("print metrics", "err", err)
-			return
-		}
-		slog.Info("metrics printed", "duration", time.Since(collectStart).Round(time.Millisecond))
-		return
 	}
 
 	if err := ingest.Push(config, data, a.Version); err != nil {
@@ -184,7 +255,47 @@ func (a *Agent) pushOnce() {
 }
 
 func (a *Agent) PrintOnce() {
-	a.pushOnce()
+	collectStart := time.Now()
+	config := a.currentConfig()
+	a.refreshSampler()
+	if a.sampler == nil {
+		return
+	}
+	if err := a.sampler.Tick(); err != nil {
+		slog.Error("collect metrics", "err", err)
+		return
+	}
+	time.Sleep(config.SampleInterval)
+	if err := a.sampler.Tick(); err != nil {
+		slog.Error("collect metrics", "err", err)
+		return
+	}
+	_ = a.sampler.RefreshSlow()
+
+	if uptime, err := host.UptimeSeconds(); err != nil {
+		slog.Warn("uptime unavailable", "err", err)
+	} else {
+		a.ServerDetails.UptimeSeconds = uptime
+	}
+	a.ServerDetails.Ip = host.GetIP()
+
+	sample := a.sampler.Snapshot()
+	if err := ingest.Print(ingest.Data{
+		AgentVersion:         a.Version,
+		ServerDetails:        a.ServerDetails,
+		ServerMetrics:        sample.ServerMetrics,
+		ZfsArcMetrics:        sample.ZfsArcMetrics,
+		InterfaceMetrics:     sample.InterfaceMetrics,
+		DiskMetrics:          sample.DiskMetrics,
+		ZfsPoolMetrics:       sample.ZfsPoolMetrics,
+		DockerContainers:     sample.DockerContainers,
+		GPUMetrics:           sample.GPUMetrics,
+		TCPConnectionMetrics: sample.TCPConnectionMetrics,
+	}); err != nil {
+		slog.Error("print metrics", "err", err)
+		return
+	}
+	slog.Info("metrics printed", "duration", time.Since(collectStart).Round(time.Millisecond))
 }
 
 func InitLogger() {

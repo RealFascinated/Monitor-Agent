@@ -128,21 +128,52 @@ download_release() {
   DOWNLOADED="${tmpdir}/${asset}"
 }
 
+config_template_path() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "${script_dir}/config-example.yml" ]]; then
+    echo "${script_dir}/config-example.yml"
+    return 0
+  fi
+  return 1
+}
+
+download_config_template() {
+  local version="$1"
+  local dest="$2"
+  local tag="agent/v${version}"
+  local base_url="https://github.com/${GITHUB_REPO}/releases/download/${tag}"
+  local template_url="${base_url}/config-example.yml"
+
+  if path="$(config_template_path)"; then
+    cp "$path" "$dest"
+    return 0
+  fi
+
+  log "Downloading config-example.yml (${tag})"
+  if curl -fsSL "$template_url" -o "$dest"; then
+    return 0
+  fi
+
+  log "config-example.yml not in release, using main branch template"
+  curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPO}/master/config-example.yml" -o "$dest"
+}
+
 write_config() {
   local ingest_token="$1"
   local api_endpoint="$2"
+  local template="$3"
   local token_escaped endpoint_escaped
+
+  [[ -f "$template" ]] || die "config template not found: ${template}"
 
   token_escaped="$(escape_yaml_string "$ingest_token")"
   endpoint_escaped="$(escape_yaml_string "$api_endpoint")"
 
   install -d -m 0755 "$CONFIG_DIR"
-  cat >"$CONFIG_FILE" <<EOF
-ingest_token: "${token_escaped}"
-api_endpoint: "${endpoint_escaped}"
-push_schedule: "*/15 * * * * *"
-enable_docker: true
-EOF
+  sed -e "s|^ingest_token:.*|ingest_token: \"${token_escaped}\"|" \
+      -e "s|^api_endpoint:.*|api_endpoint: \"${endpoint_escaped}\"|" \
+      "$template" >"$CONFIG_FILE"
   chmod 0600 "$CONFIG_FILE"
 }
 
@@ -254,8 +285,11 @@ install_agent() {
   install -d -m 0755 "$(dirname "$INSTALL_BIN")"
   install -m 0755 "$DOWNLOADED" "$INSTALL_BIN"
 
+  CONFIG_TEMPLATE="${TMPDIR}/config-example.yml"
+  download_config_template "$VERSION" "$CONFIG_TEMPLATE"
+
   log "Writing config to ${CONFIG_FILE}"
-  write_config "$INGEST_TOKEN" "$API_ENDPOINT"
+  write_config "$INGEST_TOKEN" "$API_ENDPOINT" "$CONFIG_TEMPLATE"
 
   log "Installing systemd service"
   write_service

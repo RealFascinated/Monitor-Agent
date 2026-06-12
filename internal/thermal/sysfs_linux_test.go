@@ -34,7 +34,8 @@ func TestReadHwmonTemperatures(t *testing.T) {
 	writeThermalFile(t, filepath.Join(hwmon, "temp1_input"), "68500\n")
 
 	t.Setenv("MONITOR_HOST_ROOT", root)
-	readings := readHwmonTemperatures()
+	resetSensorRegistry()
+	readings := ReadTemperatures()
 	if len(readings) != 1 {
 		t.Fatalf("readings = %+v", readings)
 	}
@@ -56,7 +57,8 @@ func TestReadThermalZoneTemperatures(t *testing.T) {
 	writeThermalFile(t, filepath.Join(zone, "temp"), "52000\n")
 
 	t.Setenv("MONITOR_HOST_ROOT", root)
-	readings := readThermalZoneTemperatures()
+	resetSensorRegistry()
+	readings := ReadTemperatures()
 	if len(readings) != 1 || readings[0].Sensor != "x86_pkg_temp" {
 		t.Fatalf("readings = %+v", readings)
 	}
@@ -135,7 +137,8 @@ func TestReadHwmonNVMeTemperatures(t *testing.T) {
 	}
 
 	t.Setenv("MONITOR_HOST_ROOT", root)
-	readings := readHwmonTemperatures()
+	resetSensorRegistry()
+	readings := ReadTemperatures()
 	if len(readings) != 3 {
 		t.Fatalf("readings = %+v", readings)
 	}

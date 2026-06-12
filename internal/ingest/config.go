@@ -7,36 +7,41 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	configEnvPrefix     = "MONITOR_"
-	defaultConfigFile   = "config.yml"
-	defaultPushSchedule = "*/15 * * * * *"
-	defaultAPIEndpoint  = "https://monitor.fascinated.cc/api/v1/servers/ingest"
+	configEnvPrefix            = "MONITOR_"
+	defaultConfigFile          = "config.yml"
+	defaultPushSchedule        = "*/5 * * * * *"
+	defaultSampleInterval      = time.Second
+	defaultSlowMetricsInterval = 30 * time.Second
+	defaultAPIEndpoint         = "https://monitor.fascinated.cc/api/v1/servers/ingest"
 )
 
 var configFileEnvVar = ConfigEnvVar("config_file")
 
 type fileConfig struct {
-	IngestToken  string `yaml:"ingest_token"`
-	ApiEndpoint  string `yaml:"api_endpoint"`
-	PushSchedule string `yaml:"push_schedule"`
-	EnableDocker *bool  `yaml:"enable_docker"`
-	EnableGPU    *bool  `yaml:"enable_gpu"`
-	PrintMode    *bool  `yaml:"print_mode"`
+	IngestToken         string `yaml:"ingest_token"`
+	ApiEndpoint         string `yaml:"api_endpoint"`
+	PushSchedule        string `yaml:"push_schedule"`
+	SampleInterval      string `yaml:"sample_interval"`
+	SlowMetricsInterval string `yaml:"slow_metrics_interval"`
+	EnableDocker *bool `yaml:"enable_docker"`
+	EnableGPU    *bool `yaml:"enable_gpu"`
 }
 
 type Config struct {
-	IngestToken  string
-	ApiEndpoint  string
-	PushSchedule string
-	EnableDocker bool
-	EnableGPU    bool
-	PrintMode    bool
+	IngestToken         string
+	ApiEndpoint         string
+	PushSchedule        string
+	SampleInterval      time.Duration
+	SlowMetricsInterval time.Duration
+	EnableDocker        bool
+	EnableGPU           bool
 }
 
 // ConfigEnvVar returns the environment variable for a config YAML key (e.g. ingest_token -> MONITOR_INGEST_TOKEN).
@@ -45,14 +50,15 @@ func ConfigEnvVar(yamlKey string) string {
 }
 
 func LoadConfig() (*Config, error) {
-	return loadConfig(false)
-}
-
-func LoadPrintConfig() (*Config, error) {
 	return loadConfig(true)
 }
 
-func loadConfig(forcePrint bool) (*Config, error) {
+// LoadConfigForPrint loads config for the print subcommand (ingest token optional).
+func LoadConfigForPrint() (*Config, error) {
+	return loadConfig(false)
+}
+
+func loadConfig(requireToken bool) (*Config, error) {
 	raw, _, err := loadFileConfig()
 	if err != nil {
 		return nil, err
@@ -66,13 +72,23 @@ func loadConfig(forcePrint bool) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
+	sampleInterval, err := resolveDuration(raw.SampleInterval, defaultSampleInterval, "sample_interval")
+	if err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+	slowInterval, err := resolveDuration(raw.SlowMetricsInterval, defaultSlowMetricsInterval, "slow_metrics_interval")
+	if err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
 
 	config := &Config{
-		IngestToken:  strings.TrimSpace(raw.IngestToken),
-		ApiEndpoint:  strings.TrimSpace(raw.ApiEndpoint),
-		PushSchedule: schedule,
-		EnableDocker: true,
-		EnableGPU:    true,
+		IngestToken:         strings.TrimSpace(raw.IngestToken),
+		ApiEndpoint:         strings.TrimSpace(raw.ApiEndpoint),
+		PushSchedule:        schedule,
+		SampleInterval:      sampleInterval,
+		SlowMetricsInterval: slowInterval,
+		EnableDocker:        true,
+		EnableGPU:           true,
 	}
 	if raw.EnableDocker != nil {
 		config.EnableDocker = *raw.EnableDocker
@@ -80,14 +96,11 @@ func loadConfig(forcePrint bool) (*Config, error) {
 	if raw.EnableGPU != nil {
 		config.EnableGPU = *raw.EnableGPU
 	}
-	if forcePrint || (raw.PrintMode != nil && *raw.PrintMode) {
-		config.PrintMode = true
-	}
 
 	if config.ApiEndpoint == "" {
 		config.ApiEndpoint = defaultAPIEndpoint
 	}
-	if !config.PrintMode && config.IngestToken == "" {
+	if requireToken && config.IngestToken == "" {
 		return nil, fmt.Errorf(
 			"config: ingest_token is required (set %s or ingest_token in config file)",
 			ConfigEnvVar("ingest_token"),
@@ -191,6 +204,21 @@ func resolvePushSchedule(raw fileConfig) (string, error) {
 		return schedule, validatePushSchedule(schedule)
 	}
 	return defaultPushSchedule, nil
+}
+
+func resolveDuration(value string, fallback time.Duration, name string) (time.Duration, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(trimmed)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", name, trimmed, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("invalid %s %q: must be positive", name, trimmed)
+	}
+	return d, nil
 }
 
 func validatePushSchedule(schedule string) error {

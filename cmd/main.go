@@ -38,7 +38,7 @@ func main() {
 	}
 
 	if len(os.Args) > 1 && os.Args[1] == "print" {
-		config, err := ingest.LoadPrintConfig()
+		config, err := ingest.LoadConfigForPrint()
 		if err != nil {
 			slog.Error("load config", "err", err)
 			os.Exit(1)

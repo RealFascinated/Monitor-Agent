@@ -5,109 +5,11 @@ package thermal
 import (
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
 	"fascinated.cc/monitor/agent/internal/linux"
 )
-
-func ReadTemperatures() []TemperatureReading {
-	var readings []TemperatureReading
-	readings = append(readings, readHwmonTemperatures()...)
-	readings = append(readings, readThermalZoneTemperatures()...)
-	readings = dedupeTemperatureReadings(readings)
-	if len(readings) == 0 {
-		return nil
-	}
-	sort.Slice(readings, func(i, j int) bool {
-		return readings[i].Sensor < readings[j].Sensor
-	})
-	return readings
-}
-
-func readThermalZoneTemperatures() []TemperatureReading {
-	entries, err := os.ReadDir(sysPath("class", "thermal"))
-	if err != nil {
-		return nil
-	}
-
-	var readings []TemperatureReading
-	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasPrefix(name, "thermal_zone") {
-			continue
-		}
-		zoneDir := sysPath("class", "thermal", name)
-		celsius, ok := readTemperatureFile(filepath.Join(zoneDir, "temp"))
-		if !ok {
-			continue
-		}
-		sensor := name
-		if zoneType := readTrimmedFile(filepath.Join(zoneDir, "type")); zoneType != "" {
-			sensor = zoneType
-		}
-		readings = append(readings, TemperatureReading{Sensor: sensor, Celsius: celsius})
-	}
-	return readings
-}
-
-func readHwmonTemperatures() []TemperatureReading {
-	var inputs []string
-	for _, pattern := range hwmonTemperatureGlobPatterns() {
-		matches, err := filepath.Glob(linux.HostPath(pattern))
-		if err != nil {
-			continue
-		}
-		inputs = append(inputs, matches...)
-	}
-	if len(inputs) == 0 {
-		return nil
-	}
-
-	var readings []TemperatureReading
-	seenPath := make(map[string]struct{}, len(inputs))
-	seenPhysical := make(map[string]struct{})
-	for _, inputPath := range inputs {
-		resolved := inputPath
-		if abs, err := filepath.EvalSymlinks(inputPath); err == nil {
-			resolved = abs
-		}
-		if _, ok := seenPath[resolved]; ok {
-			continue
-		}
-		seenPath[resolved] = struct{}{}
-
-		file := filepath.Base(inputPath)
-		if !strings.HasSuffix(file, "_input") {
-			continue
-		}
-		basename := strings.TrimSuffix(file, "_input")
-		dir := filepath.Dir(inputPath)
-
-		label := readTrimmedFile(filepath.Join(dir, basename+"_label"))
-		if !isReportedTemperatureLabel(label) {
-			continue
-		}
-
-		hwmonDir := hwmonRootDir(dir)
-		hwName := readTrimmedFile(filepath.Join(hwmonDir, "name"))
-
-		celsius, ok := readTemperatureFile(inputPath)
-		if !ok {
-			continue
-		}
-
-		physicalKey := hwmonPhysicalDedupKey(hwName, dir, basename, label)
-		if _, ok := seenPhysical[physicalKey]; ok {
-			continue
-		}
-		seenPhysical[physicalKey] = struct{}{}
-		sensor := hwmonSensorKey(hwName, dir, basename, label)
-		readings = append(readings, TemperatureReading{Sensor: sensor, Celsius: celsius})
-	}
-	return readings
-}
 
 func hwmonTemperatureGlobPatterns() []string {
 	return []string{

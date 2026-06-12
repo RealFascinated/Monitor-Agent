@@ -15,7 +15,6 @@ func BuildLinuxMetrics(
 	diskstatsBefore, diskstatsAfter map[string]linux.DiskstatsEntry,
 	cgroupIOBefore, cgroupIOAfter map[string]linux.CgroupIOEntry,
 	zfsIOBefore, zfsIOAfter map[string]zfs.PoolIO,
-	zfsRates map[string]zfs.PoolIORates,
 	vdevMap map[string][]string,
 	cgroupDevice string,
 	hasZFS bool,
@@ -36,14 +35,7 @@ func BuildLinuxMetrics(
 		case "zfs":
 			if hasZFS && zfs.MountGetsPoolIO(mount.Source, mount.Name) {
 				pool := zfs.PoolName(mount.Source)
-				if poolRates, ok := zfsRates[pool]; ok {
-					rates.ReadBytesPerSecond = poolRates.ReadBytesPerSecond
-					rates.WriteBytesPerSecond = poolRates.WriteBytesPerSecond
-					rates.ReadIops = poolRates.ReadIops
-					rates.WriteIops = poolRates.WriteIops
-				} else {
-					rates = poolRatesFromSnapshots(pool, zfsIOBefore, zfsIOAfter, elapsed)
-				}
+				rates = poolRatesFromSnapshots(pool, zfsIOBefore, zfsIOAfter, elapsed)
 				if vdevRates, ok := lookupZFSPoolVdevDiskStats(pool, diskstatsBefore, diskstatsAfter, vdevMap, elapsed); ok {
 					rates.IoUsagePercent = vdevRates.IoUsagePercent
 					rates.IoWaitMilliseconds = vdevRates.IoWaitMilliseconds

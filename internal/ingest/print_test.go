@@ -34,35 +34,18 @@ func TestPrint(t *testing.T) {
 	}
 }
 
-func TestLoadPrintConfigNoToken(t *testing.T) {
+func TestLoadConfigForPrintNoToken(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
 	unsetConfigEnv(t)
 	os.Unsetenv(configFileEnvVar)
 
-	cfg, err := LoadPrintConfig()
+	cfg, err := LoadConfigForPrint()
 	if err != nil {
-		t.Fatalf("LoadPrintConfig: %v", err)
+		t.Fatalf("LoadConfigForPrint: %v", err)
 	}
-	if !cfg.PrintMode {
-		t.Fatal("expected print mode")
-	}
-}
-
-func TestLoadConfigPrintModeEnv(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-
-	unsetConfigEnv(t)
-	os.Unsetenv(configFileEnvVar)
-	t.Setenv(ConfigEnvVar("print_mode"), "true")
-
-	cfg, err := LoadConfig()
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
-	if !cfg.PrintMode {
-		t.Fatal("expected print mode from env")
+	if cfg.IngestToken != "" {
+		t.Fatalf("expected empty token, got %q", cfg.IngestToken)
 	}
 }

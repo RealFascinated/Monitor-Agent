@@ -25,7 +25,6 @@ func BuildFromSamples(
 	mounts []Mount,
 	beforeIO, afterIO map[string]IOCounters,
 	beforeZFS, afterZFS map[string]zfs.PoolIO,
-	zfsRates map[string]zfs.PoolIORates,
 	elapsed time.Duration,
 ) []ingest.DiskMetric {
 	metrics := make([]ingest.DiskMetric, 0, len(mounts))
@@ -38,7 +37,7 @@ func BuildFromSamples(
 			InodeTotal: int64(mount.InodeTotal),
 		}
 
-		rates := ratesForMount(mount, beforeIO, afterIO, beforeZFS, afterZFS, zfsRates, hasZFS, elapsed)
+		rates := ratesForMount(mount, beforeIO, afterIO, beforeZFS, afterZFS, hasZFS, elapsed)
 		metric.IoReadBytesPerSecond = rates.ReadBytesPerSecond
 		metric.IoWriteBytesPerSecond = rates.WriteBytesPerSecond
 		metric.IoUsagePercent = rates.IoUsagePercent
@@ -56,7 +55,6 @@ func ratesForMount(
 	mount Mount,
 	beforeIO, afterIO map[string]IOCounters,
 	beforeZFS, afterZFS map[string]zfs.PoolIO,
-	zfsRates map[string]zfs.PoolIORates,
 	hasZFS bool,
 	elapsed time.Duration,
 ) Rates {
@@ -66,14 +64,6 @@ func ratesForMount(
 			return Rates{}
 		}
 		pool := zfs.PoolName(mount.Source)
-		if rates, ok := zfsRates[pool]; ok {
-			return Rates{
-				ReadBytesPerSecond:  rates.ReadBytesPerSecond,
-				WriteBytesPerSecond: rates.WriteBytesPerSecond,
-				ReadIops:            rates.ReadIops,
-				WriteIops:           rates.WriteIops,
-			}
-		}
 		return poolRatesFromSnapshots(pool, beforeZFS, afterZFS, elapsed)
 	default:
 		device := resolveDiskDevice(mount.Source, beforeIO, afterIO)
