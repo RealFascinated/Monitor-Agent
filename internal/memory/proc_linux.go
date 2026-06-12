@@ -11,14 +11,11 @@ import (
 )
 
 func Read() Snapshot {
-	if max, current, ok := linux.CgroupMemoryBytes(); ok {
-		return Snapshot{
-			Usage:     float64(current),
-			Total:     float64(max),
-			Available: float64(max - current),
-		}
-	}
+	snap := readMeminfo()
+	return overlayCgroupMemory(snap, linux.ReadCgroupMemory())
+}
 
+func readMeminfo() Snapshot {
 	file, err := os.Open("/proc/meminfo")
 	if err != nil {
 		return Snapshot{}
@@ -55,5 +52,15 @@ func Read() Snapshot {
 	if snap.Extras.SwapUsed < 0 {
 		snap.Extras.SwapUsed = 0
 	}
+	return snap
+}
+
+func overlayCgroupMemory(snap Snapshot, cg linux.CgroupMemory) Snapshot {
+	if !cg.OK {
+		return snap
+	}
+	snap.Total = float64(cg.Max)
+	snap.Usage = float64(cg.Usage())
+	snap.Available = float64(cg.Available())
 	return snap
 }

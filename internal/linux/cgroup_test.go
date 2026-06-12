@@ -40,6 +40,77 @@ func TestParseCPUSet(t *testing.T) {
 	}
 }
 
+func TestCgroupMemoryUsage(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		mem  CgroupMemory
+		want uint64
+	}{
+		{
+			name: "postgres shmem in file",
+			mem: CgroupMemory{
+				Max: 8e9, Current: 7898e6, File: 7600e6, OK: true,
+			},
+			want: 298e6,
+		},
+		{
+			name: "no file cache",
+			mem: CgroupMemory{
+				Max: 4e9, Current: 1e9, File: 0, OK: true,
+			},
+			want: 1e9,
+		},
+		{
+			name: "not ok",
+			mem:  CgroupMemory{OK: false},
+			want: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.mem.Usage(); got != tc.want {
+				t.Fatalf("Usage() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCgroupMemoryAvailable(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		mem  CgroupMemory
+		want uint64
+	}{
+		{
+			name: "postgres shmem in file",
+			mem: CgroupMemory{
+				Max: 8e9, Current: 7898e6, File: 7600e6, OK: true,
+			},
+			want: 8e9 - 298e6,
+		},
+		{
+			name: "not ok",
+			mem:  CgroupMemory{OK: false},
+			want: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.mem.Available(); got != tc.want {
+				t.Fatalf("Available() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFilterPerCPU(t *testing.T) {
 	t.Parallel()
 

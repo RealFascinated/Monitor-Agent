@@ -171,35 +171,121 @@ func EffectiveCPUs(dir string) (map[string]struct{}, bool) {
 	return nil, false
 }
 
-func CgroupMemoryBytes() (max, current uint64, ok bool) {
+type CgroupMemory struct {
+	Max, Current, File uint64
+	OK                 bool
+}
+
+// Usage reports cgroup memory consumption excluding the file-backed cache
+// counter (page cache, tmpfs, and shmem), matching Proxmox LXC accounting.
+func (m CgroupMemory) Usage() uint64 {
+	if !m.OK || m.Current <= m.File {
+		return 0
+	}
+	return m.Current - m.File
+}
+
+// Available is the cgroup memory limit minus Usage.
+func (m CgroupMemory) Available() uint64 {
+	if !m.OK {
+		return 0
+	}
+	usage := m.Usage()
+	if usage >= m.Max {
+		return 0
+	}
+	return m.Max - usage
+}
+
+func ReadCgroupMemory() CgroupMemory {
 	dir := Dir()
 	if dir == "" {
-		return 0, 0, false
+		return CgroupMemory{}
 	}
+	if mem := readCgroupMemoryDir(dir); mem.OK {
+		return mem
+	}
+	return readCgroupMemoryDir(dir + "/.lxc")
+}
 
-	maxData, err := os.ReadFile(dir + "/memory.max")
-	if err != nil {
-		return 0, 0, false
+func readCgroupMemoryDir(dir string) CgroupMemory {
+	max, ok := readCgroupMemoryMax(dir)
+	if !ok {
+		return CgroupMemory{}
 	}
-	currentData, err := os.ReadFile(dir + "/memory.current")
-	if err != nil {
-		return 0, 0, false
+	current, ok := readCgroupMemoryCurrent(dir)
+	if !ok {
+		return CgroupMemory{}
 	}
+	file := readCgroupMemoryFile(dir)
+	return CgroupMemory{
+		Max:     max,
+		Current: current,
+		File:    file,
+		OK:      true,
+	}
+}
 
-	maxStr := strings.TrimSpace(string(maxData))
-	if maxStr == "max" {
-		return 0, 0, false
+func readCgroupMemoryMax(dir string) (uint64, bool) {
+	for _, name := range []string{"memory.max", "memory.limit_in_bytes"} {
+		data, err := os.ReadFile(dir + "/" + name)
+		if err != nil {
+			continue
+		}
+		value := strings.TrimSpace(string(data))
+		if value == "max" {
+			return 0, false
+		}
+		max, err := strconv.ParseUint(value, 10, 64)
+		if err != nil || max == 0 {
+			continue
+		}
+		return max, true
 	}
+	return 0, false
+}
 
-	maxVal, err := strconv.ParseUint(maxStr, 10, 64)
-	if err != nil || maxVal == 0 {
-		return 0, 0, false
+func readCgroupMemoryCurrent(dir string) (uint64, bool) {
+	for _, name := range []string{"memory.current", "memory.usage_in_bytes"} {
+		data, err := os.ReadFile(dir + "/" + name)
+		if err != nil {
+			continue
+		}
+		current, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+		if err != nil {
+			continue
+		}
+		return current, true
 	}
-	currentVal, err := strconv.ParseUint(strings.TrimSpace(string(currentData)), 10, 64)
+	return 0, false
+}
+
+func readCgroupMemoryFile(dir string) uint64 {
+	f, err := os.Open(dir + "/memory.stat")
 	if err != nil {
-		return 0, 0, false
+		return 0
 	}
-	return maxVal, currentVal, true
+	defer f.Close()
+
+	var file uint64
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 2 {
+			continue
+		}
+		value, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		switch fields[0] {
+		case "file":
+			return value
+		case "total_cache":
+			file = value
+		}
+	}
+	return file
 }
 
 func ReadIOStats() map[string]CgroupIOEntry {
