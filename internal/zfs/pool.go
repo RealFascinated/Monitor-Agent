@@ -5,6 +5,8 @@ import "strings"
 type PoolIO struct {
 	Nread    uint64
 	Nwritten uint64
+	Reads    uint64
+	Writes   uint64
 }
 
 type PoolIORates struct {

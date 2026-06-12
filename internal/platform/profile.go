@@ -1,4 +1,4 @@
-package collector
+package platform
 
 import (
 	"log/slog"

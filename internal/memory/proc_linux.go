@@ -10,15 +10,6 @@ import (
 	"fascinated.cc/monitor/agent/internal/linux"
 )
 
-type Extras struct {
-	Buffers, Cached, SwapUsed, SwapTotal int64
-}
-
-type Snapshot struct {
-	Usage, Total, Available float64
-	Extras                  Extras
-}
-
 func Read() Snapshot {
 	if max, current, ok := linux.CgroupMemoryBytes(); ok {
 		return Snapshot{

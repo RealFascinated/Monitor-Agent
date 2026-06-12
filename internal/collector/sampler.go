@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"fascinated.cc/monitor/agent/internal/ingest"
+	"fascinated.cc/monitor/agent/internal/platform"
 )
 
 // Sampler maintains stateful metric snapshots for background sampling and push.
@@ -16,7 +17,14 @@ type Sampler struct {
 
 	result   Result
 	ready    bool
-	platform any
+	clockMHz float64
+	backend  platform.Backend
+}
+
+func (s *Sampler) ClockMHz() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.clockMHz
 }
 
 func NewSampler(opts Options) *Sampler {
@@ -26,6 +34,11 @@ func NewSampler(opts Options) *Sampler {
 			InterfaceMetrics: []ingest.InterfaceMetrics{},
 			DiskMetrics:      []ingest.DiskMetric{},
 		},
+		backend: platform.New(platform.Options{
+			HasZFS:       opts.HasZFS,
+			EnableDocker: opts.EnableDocker,
+			EnableGPU:    opts.EnableGPU,
+		}),
 	}
 }
 
@@ -36,7 +49,21 @@ func (s *Sampler) Tick() error {
 }
 
 func (s *Sampler) RefreshSlow() error {
+	s.tickMu.Lock()
+	defer s.tickMu.Unlock()
 	return s.refreshSlow()
+}
+
+// RunOnce performs two ticks and one slow refresh for one-shot collection (print mode).
+func (s *Sampler) RunOnce(interval time.Duration) error {
+	if err := s.Tick(); err != nil {
+		return err
+	}
+	time.Sleep(interval)
+	if err := s.Tick(); err != nil {
+		return err
+	}
+	return s.RefreshSlow()
 }
 
 func (s *Sampler) Ready() bool {

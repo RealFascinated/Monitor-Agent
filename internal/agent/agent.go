@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"fascinated.cc/monitor/agent/internal/collector"
-	"fascinated.cc/monitor/agent/internal/cpu"
 	"fascinated.cc/monitor/agent/internal/host"
 	"fascinated.cc/monitor/agent/internal/ingest"
 	"fascinated.cc/monitor/agent/internal/zfs"
@@ -126,10 +125,6 @@ func (a *Agent) runSampleLoop(ctx context.Context, _ time.Duration) {
 }
 
 func (a *Agent) runSlowLoop(ctx context.Context, _ time.Duration) {
-	if a.sampler != nil {
-		_ = a.sampler.RefreshSlow()
-	}
-
 	for {
 		interval := a.slowMetricsInterval()
 		timer := time.NewTimer(interval)
@@ -143,11 +138,6 @@ func (a *Agent) runSlowLoop(ctx context.Context, _ time.Duration) {
 			}
 			if err := a.sampler.RefreshSlow(); err != nil {
 				slog.Warn("slow metrics refresh", "err", err)
-			}
-			if mhz, err := cpu.GetClockSpeedMHz(); err != nil {
-				slog.Warn("cpu clock speed unavailable", "err", err)
-			} else {
-				a.ServerDetails.CPUClockMhz = mhz
 			}
 		}
 	}
@@ -172,12 +162,8 @@ func (a *Agent) slowMetricsInterval() time.Duration {
 }
 
 func (a *Agent) startCron(schedule string) error {
-	a.cronMu.Lock()
-	defer a.cronMu.Unlock()
-
-	if a.cron != nil {
-		stopCtx := a.cron.Stop()
-		<-stopCtx.Done()
+	if err := ingest.ValidatePushSchedule(schedule); err != nil {
+		return err
 	}
 
 	c := cron.New(
@@ -187,8 +173,18 @@ func (a *Agent) startCron(schedule string) error {
 	if _, err := c.AddFunc(schedule, a.pushOnce); err != nil {
 		return err
 	}
+
+	a.cronMu.Lock()
+	defer a.cronMu.Unlock()
+
+	oldCron := a.cron
 	c.Start()
 	a.cron = c
+
+	if oldCron != nil {
+		stopCtx := oldCron.Stop()
+		<-stopCtx.Done()
+	}
 	return nil
 }
 
@@ -227,26 +223,15 @@ func (a *Agent) pushOnce() {
 		return
 	}
 
+	a.ServerDetails.CPUClockMhz = a.sampler.ClockMHz()
+
 	sample := a.sampler.Snapshot()
 	if !a.sampler.Ready() {
 		slog.Warn("metrics not ready, skipping push")
 		return
 	}
 
-	data := ingest.Data{
-		AgentVersion:         a.Version,
-		ServerDetails:        a.ServerDetails,
-		ServerMetrics:        sample.ServerMetrics,
-		ZfsArcMetrics:        sample.ZfsArcMetrics,
-		InterfaceMetrics:     sample.InterfaceMetrics,
-		DiskMetrics:          sample.DiskMetrics,
-		ZfsPoolMetrics:       sample.ZfsPoolMetrics,
-		DockerContainers:     sample.DockerContainers,
-		GPUMetrics:           sample.GPUMetrics,
-		TCPConnectionMetrics: sample.TCPConnectionMetrics,
-	}
-
-	if err := ingest.Push(config, data, a.Version); err != nil {
+	if err := ingest.Push(config, buildIngestData(a.Version, a.ServerDetails, sample), a.Version); err != nil {
 		slog.Error("push metrics", "err", err)
 		return
 	}
@@ -261,16 +246,10 @@ func (a *Agent) PrintOnce() {
 	if a.sampler == nil {
 		return
 	}
-	if err := a.sampler.Tick(); err != nil {
+	if err := a.sampler.RunOnce(config.SampleInterval); err != nil {
 		slog.Error("collect metrics", "err", err)
 		return
 	}
-	time.Sleep(config.SampleInterval)
-	if err := a.sampler.Tick(); err != nil {
-		slog.Error("collect metrics", "err", err)
-		return
-	}
-	_ = a.sampler.RefreshSlow()
 
 	if uptime, err := host.UptimeSeconds(); err != nil {
 		slog.Warn("uptime unavailable", "err", err)
@@ -278,11 +257,20 @@ func (a *Agent) PrintOnce() {
 		a.ServerDetails.UptimeSeconds = uptime
 	}
 	a.ServerDetails.Ip = host.GetIP()
+	a.ServerDetails.CPUClockMhz = a.sampler.ClockMHz()
 
 	sample := a.sampler.Snapshot()
-	if err := ingest.Print(ingest.Data{
-		AgentVersion:         a.Version,
-		ServerDetails:        a.ServerDetails,
+	if err := ingest.Print(buildIngestData(a.Version, a.ServerDetails, sample)); err != nil {
+		slog.Error("print metrics", "err", err)
+		return
+	}
+	slog.Info("metrics printed", "duration", time.Since(collectStart).Round(time.Millisecond))
+}
+
+func buildIngestData(version string, details ingest.ServerDetails, sample collector.Result) ingest.Data {
+	return ingest.Data{
+		AgentVersion:         version,
+		ServerDetails:        details,
 		ServerMetrics:        sample.ServerMetrics,
 		ZfsArcMetrics:        sample.ZfsArcMetrics,
 		InterfaceMetrics:     sample.InterfaceMetrics,
@@ -291,11 +279,7 @@ func (a *Agent) PrintOnce() {
 		DockerContainers:     sample.DockerContainers,
 		GPUMetrics:           sample.GPUMetrics,
 		TCPConnectionMetrics: sample.TCPConnectionMetrics,
-	}); err != nil {
-		slog.Error("print metrics", "err", err)
-		return
 	}
-	slog.Info("metrics printed", "duration", time.Since(collectStart).Round(time.Millisecond))
 }
 
 func InitLogger() {

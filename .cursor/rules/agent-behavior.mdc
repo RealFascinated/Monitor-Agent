@@ -33,20 +33,21 @@ After completing changes, suggest a short commit message the user can use — bu
 
 ## Project Overview
 
-Go metrics agent (`fascinated.cc/monitor/agent`) for Linux and Windows. Collects host metrics (CPU, memory, load, network, disk, optional ZFS and Docker) and pushes JSON to the Monitor API ingest endpoint on a cron schedule.
+Go metrics agent (`fascinated.cc/monitor/agent`) for Linux and Windows. Collects host metrics (CPU, memory, load, network, disk, optional ZFS and Docker) and pushes JSON to the Monitor API ingest endpoint on a cron schedule. Runtime uses three loops: fast sample tick, slow metrics refresh, and cron push against a stateful `collector.Sampler` backed by `internal/platform` backends.
 
 | Package | Role |
 |---------|------|
 | `cmd` | `main` — config load, signal handling, update subcommand |
-| `internal/agent` | Cron scheduling, push loop, config reload |
-| `internal/collector` | Platform-specific `collect()` facade → `ingest` types |
+| `internal/agent` | Cron scheduling, sample/slow loops, push loop, config reload |
+| `internal/platform` | Platform backends (linux/windows tick and slow orchestration) |
+| `internal/collector` | Stateful `Sampler` (fast tick + slow refresh) → `ingest` types |
 | `internal/ingest` | Config (YAML + `MONITOR_*` env), HTTP push, ingest JSON structs |
 | `internal/cpu` | CPU usage, per-core, clock speed, iowait (PDH), package power |
 | `internal/memory` | Memory and swap (Linux `/proc` + cgroup) |
 | `internal/thermal` | Temperature sensors (sysfs, gopsutil, LHM fallback) |
 | `internal/disk`, `network`, `host`, `loadavg`, `counters` | Other metric sources |
 | `internal/linux`, `zfs`, `docker`, `winpdh`, `lhm` | Platform-specific collectors |
-| `internal/delta`, `iostats`, `sample` | Rate/delta helpers |
+| `internal/delta`, `iostats` | Rate/delta helpers |
 | `internal/update` | Self-update via GitHub releases |
 
 Supported OS: `linux`, `windows` only (`cmd/main.go` exits on other platforms). Platform code uses `//go:build` tags; unsupported platforms get stub files (`*_unsupported.go`, `other.go`).

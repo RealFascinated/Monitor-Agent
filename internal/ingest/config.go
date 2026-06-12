@@ -221,6 +221,10 @@ func resolveDuration(value string, fallback time.Duration, name string) (time.Du
 	return d, nil
 }
 
+func ValidatePushSchedule(schedule string) error {
+	return validatePushSchedule(schedule)
+}
+
 func validatePushSchedule(schedule string) error {
 	parser := cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.DowOptional)
 	_, err := parser.Parse(schedule)
