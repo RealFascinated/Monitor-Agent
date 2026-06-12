@@ -197,6 +197,15 @@ func (m CgroupMemory) Available() uint64 {
 	return m.Max - m.Current
 }
 
+func CgroupMemoryCurrent() (uint64, bool) {
+	for _, dir := range cgroupMemorySearchDirs() {
+		if current, ok := readCgroupMemoryCurrent(dir); ok {
+			return current, true
+		}
+	}
+	return 0, false
+}
+
 func ReadCgroupMemory(limitFallback uint64) CgroupMemory {
 	searchDirs := cgroupMemorySearchDirs()
 
@@ -221,7 +230,7 @@ func ReadCgroupMemory(limitFallback uint64) CgroupMemory {
 		return CgroupMemory{}
 	}
 
-	if max == 0 && limitFallback > 0 && cgroupMemoryLimitFallback(limitFallback, searchDirs) {
+	if max == 0 && limitFallback > 0 && (IsContainer() || LxcfsActive()) {
 		max = limitFallback
 	}
 	if max == 0 {
@@ -263,26 +272,6 @@ func cgroupMemorySearchDirs() []string {
 		}
 	}
 	return uniqueDirs(append(dirs, cgroupMemoryBaseDir()+"/.lxc", "/sys/fs/cgroup/.lxc")...)
-}
-
-func cgroupMemoryLimitFallback(limitFallback uint64, searchDirs []string) bool {
-	if IsContainer() {
-		return true
-	}
-	for _, dir := range searchDirs {
-		if cgroupMemoryUnlimited(dir) {
-			return true
-		}
-	}
-	return false
-}
-
-func cgroupMemoryUnlimited(dir string) bool {
-	data, err := os.ReadFile(dir + "/memory.max")
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(string(data)) == "max"
 }
 
 func cgroupMemoryBaseDir() string {

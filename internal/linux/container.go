@@ -12,6 +12,8 @@ import (
 var (
 	containerOnce sync.Once
 	containerEnv  bool
+	lxcfsOnce     sync.Once
+	lxcfsActive   bool
 )
 
 func IsContainer() bool {
@@ -37,4 +39,16 @@ func detectContainer() bool {
 		return strings.TrimSpace(string(out)) != "none"
 	}
 	return false
+}
+
+func LxcfsActive() bool {
+	lxcfsOnce.Do(func() {
+		data, err := os.ReadFile("/proc/self/mountinfo")
+		if err != nil {
+			return
+		}
+		s := string(data)
+		lxcfsActive = strings.Contains(s, "lxcfs") && strings.Contains(s, "meminfo")
+	})
+	return lxcfsActive
 }

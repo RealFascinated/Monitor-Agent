@@ -62,14 +62,6 @@ func TestCgroupMemorySearchDirs(t *testing.T) {
 	}
 }
 
-func TestCgroupMemoryLimitFallback(t *testing.T) {
-	t.Parallel()
-
-	if cgroupMemoryLimitFallback(8e9, nil) {
-		t.Fatal("expected false without dirs when not in container")
-	}
-}
-
 func TestCgroupMemoryUsage(t *testing.T) {
 	t.Parallel()
 
