@@ -27,6 +27,12 @@ func detectContainer() bool {
 			return true
 		}
 	}
+	if data, err := os.ReadFile("/proc/self/cgroup"); err == nil {
+		s := string(data)
+		if strings.Contains(s, "/lxc/") || strings.Contains(s, ".lxc") {
+			return true
+		}
+	}
 	if out, err := exec.Command("systemd-detect-virt", "-c").Output(); err == nil {
 		return strings.TrimSpace(string(out)) != "none"
 	}

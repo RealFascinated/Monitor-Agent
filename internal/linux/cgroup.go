@@ -197,33 +197,126 @@ func (m CgroupMemory) Available() uint64 {
 	return m.Max - usage
 }
 
-func ReadCgroupMemory() CgroupMemory {
-	dir := Dir()
-	if dir == "" {
-		return CgroupMemory{}
-	}
-	if mem := readCgroupMemoryDir(dir); mem.OK {
-		return mem
-	}
-	return readCgroupMemoryDir(dir + "/.lxc")
-}
+func ReadCgroupMemory(limitFallback uint64) CgroupMemory {
+	searchDirs := cgroupMemorySearchDirs()
 
-func readCgroupMemoryDir(dir string) CgroupMemory {
-	max, ok := readCgroupMemoryMax(dir)
-	if !ok {
+	var max uint64
+	for _, dir := range searchDirs {
+		if m, ok := readCgroupMemoryMax(dir); ok {
+			max = m
+			break
+		}
+	}
+
+	var current uint64
+	var currentDir string
+	for _, dir := range searchDirs {
+		if c, ok := readCgroupMemoryCurrent(dir); ok {
+			current = c
+			currentDir = dir
+			break
+		}
+	}
+	if currentDir == "" {
 		return CgroupMemory{}
 	}
-	current, ok := readCgroupMemoryCurrent(dir)
-	if !ok {
+
+	if max == 0 && limitFallback > 0 && cgroupMemoryLimitFallback(limitFallback, searchDirs) {
+		max = limitFallback
+	}
+	if max == 0 {
 		return CgroupMemory{}
 	}
-	file := readCgroupMemoryFile(dir)
+
+	file := readCgroupMemoryFile(currentDir)
+	if file == 0 {
+		for _, dir := range searchDirs {
+			if f := readCgroupMemoryFile(dir); f > 0 {
+				file = f
+				break
+			}
+		}
+	}
+
 	return CgroupMemory{
 		Max:     max,
 		Current: current,
 		File:    file,
 		OK:      true,
 	}
+}
+
+func cgroupV2Dir() string {
+	data, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return cgroupMemoryBaseDir()
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+		fields := strings.SplitN(line, ":", 3)
+		if len(fields) != 3 || fields[0] != "0" {
+			continue
+		}
+		rel := strings.TrimPrefix(fields[2], "/")
+		if rel == "" {
+			return cgroupMemoryBaseDir()
+		}
+		return filepath.Join("/sys/fs/cgroup", rel)
+	}
+	return cgroupMemoryBaseDir()
+}
+
+func cgroupMemorySearchDirs() []string {
+	var dirs []string
+	for dir := cgroupV2Dir(); strings.HasPrefix(dir, "/sys/fs/cgroup"); dir = filepath.Dir(dir) {
+		dirs = append(dirs, dir)
+		if dir == "/sys/fs/cgroup" {
+			break
+		}
+	}
+	return uniqueDirs(append(dirs, cgroupMemoryBaseDir()+"/.lxc", "/sys/fs/cgroup/.lxc")...)
+}
+
+func cgroupMemoryLimitFallback(limitFallback uint64, searchDirs []string) bool {
+	if IsContainer() {
+		return true
+	}
+	for _, dir := range searchDirs {
+		if cgroupMemoryUnlimited(dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func cgroupMemoryUnlimited(dir string) bool {
+	data, err := os.ReadFile(dir + "/memory.max")
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(data)) == "max"
+}
+
+func cgroupMemoryBaseDir() string {
+	if d := Dir(); d != "" {
+		return d
+	}
+	return "/sys/fs/cgroup"
+}
+
+func uniqueDirs(dirs ...string) []string {
+	seen := make(map[string]struct{}, len(dirs))
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		out = append(out, dir)
+	}
+	return out
 }
 
 func readCgroupMemoryMax(dir string) (uint64, bool) {

@@ -40,6 +40,36 @@ func TestParseCPUSet(t *testing.T) {
 	}
 }
 
+func TestCgroupMemorySearchDirs(t *testing.T) {
+	t.Parallel()
+
+	got := cgroupMemorySearchDirs()
+	if len(got) == 0 {
+		t.Fatal("expected at least one cgroup dir")
+	}
+	if got[0] != cgroupV2Dir() {
+		t.Fatalf("first dir = %q, want %q", got[0], cgroupV2Dir())
+	}
+	foundRoot := false
+	for _, dir := range got {
+		if dir == "/sys/fs/cgroup" {
+			foundRoot = true
+			break
+		}
+	}
+	if !foundRoot {
+		t.Fatalf("dirs = %#v, missing /sys/fs/cgroup", got)
+	}
+}
+
+func TestCgroupMemoryLimitFallback(t *testing.T) {
+	t.Parallel()
+
+	if cgroupMemoryLimitFallback(8e9, nil) {
+		t.Fatal("expected false without dirs when not in container")
+	}
+}
+
 func TestCgroupMemoryUsage(t *testing.T) {
 	t.Parallel()
 

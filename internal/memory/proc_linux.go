@@ -12,7 +12,7 @@ import (
 
 func Read() Snapshot {
 	snap := readMeminfo()
-	return overlayCgroupMemory(snap, linux.ReadCgroupMemory())
+	return overlayCgroupMemory(snap, linux.ReadCgroupMemory(uint64(snap.Total)))
 }
 
 func readMeminfo() Snapshot {
