@@ -81,6 +81,19 @@ func parseProcStat(r io.Reader) ProcStatSnapshot {
 	return snap
 }
 
+func FilterPerCPU(stats map[string]CPUStat, allowed map[string]struct{}) map[string]CPUStat {
+	if len(stats) == 0 || len(allowed) == 0 {
+		return stats
+	}
+	out := make(map[string]CPUStat, len(allowed))
+	for id, stat := range stats {
+		if _, ok := allowed[id]; ok {
+			out[id] = stat
+		}
+	}
+	return out
+}
+
 func parseCPUStatFields(fields []string) CPUStat {
 	if len(fields) < 8 {
 		return CPUStat{}

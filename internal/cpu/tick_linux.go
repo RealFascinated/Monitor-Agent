@@ -33,8 +33,21 @@ func ComputeLinuxTick(in LinuxTickInput) ingest.ServerMetrics {
 		metrics.CPUIowaitPercent = iowait
 		metrics.CPUStealPercent = steal
 	}
-	if len(in.PrevProc.PerCPU) > 0 && len(in.CurrProc.PerCPU) > 0 {
-		metrics.CPUCoreMetrics = coreMetricsFromUsage(ComputePerCoreCPU(in.PrevProc.PerCPU, in.CurrProc.PerCPU))
+	// Per-core /proc/stat counters are host-wide per physical CPU. When cgroup
+	// cpu.stat is available we report container-scoped total CPU instead, so
+	// per-core metrics would disagree with the total (no cgroup per-core API).
+	if !in.HasCgroupCPU {
+		prevPerCPU := in.PrevProc.PerCPU
+		currPerCPU := in.CurrProc.PerCPU
+		if in.Cgroup != "" {
+			if allowed, ok := linux.EffectiveCPUs(in.Cgroup); ok {
+				prevPerCPU = linux.FilterPerCPU(prevPerCPU, allowed)
+				currPerCPU = linux.FilterPerCPU(currPerCPU, allowed)
+			}
+		}
+		if len(prevPerCPU) > 0 && len(currPerCPU) > 0 {
+			metrics.CPUCoreMetrics = coreMetricsFromUsage(ComputePerCoreCPU(prevPerCPU, currPerCPU))
+		}
 	}
 	if in.HasPowerBefore && in.HasPowerAfter {
 		maxEnergy := in.CurrPowerMax
