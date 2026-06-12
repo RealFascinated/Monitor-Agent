@@ -12,9 +12,6 @@ import (
 
 func Read() Snapshot {
 	snap := readMeminfo()
-	if linux.LxcfsActive() {
-		return overlayLxcfsMemory(snap)
-	}
 	return overlayCgroupMemory(snap, linux.ReadCgroupMemory(uint64(snap.Total)))
 }
 
@@ -55,24 +52,6 @@ func readMeminfo() Snapshot {
 	if snap.Extras.SwapUsed < 0 {
 		snap.Extras.SwapUsed = 0
 	}
-	return snap
-}
-
-func overlayLxcfsMemory(snap Snapshot) Snapshot {
-	limit := uint64(snap.Total)
-	if limit == 0 {
-		return snap
-	}
-	current, ok := linux.CgroupMemoryCurrent()
-	if !ok {
-		return snap
-	}
-	snap.Usage = float64(current)
-	if current >= limit {
-		snap.Available = 0
-		return snap
-	}
-	snap.Available = float64(limit - current)
 	return snap
 }
 

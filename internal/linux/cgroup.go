@@ -172,18 +172,17 @@ func EffectiveCPUs(dir string) (map[string]struct{}, bool) {
 }
 
 type CgroupMemory struct {
-	Max, Current uint64
-	OK           bool
+	Max, Current, File uint64
+	OK                 bool
 }
 
-// Usage is memory.current — total memory charged to the cgroup, including
-// anonymous memory, shmem, and page cache. This matches what counts against
-// the container limit from inside the cgroup namespace.
+// Usage reports memory consumption using Proxmox's cgroup v2 formula:
+// memory.current minus memory.stat file (page cache, tmpfs, and shmem).
 func (m CgroupMemory) Usage() uint64 {
-	if !m.OK {
+	if !m.OK || m.Current <= m.File {
 		return 0
 	}
-	return m.Current
+	return m.Current - m.File
 }
 
 // Available is the cgroup memory limit minus Usage.
@@ -191,23 +190,28 @@ func (m CgroupMemory) Available() uint64 {
 	if !m.OK {
 		return 0
 	}
-	if m.Current >= m.Max {
+	usage := m.Usage()
+	if usage >= m.Max {
 		return 0
 	}
-	return m.Max - m.Current
-}
-
-func CgroupMemoryCurrent() (uint64, bool) {
-	for _, dir := range cgroupMemorySearchDirs() {
-		if current, ok := readCgroupMemoryCurrent(dir); ok {
-			return current, true
-		}
-	}
-	return 0, false
+	return m.Max - usage
 }
 
 func ReadCgroupMemory(limitFallback uint64) CgroupMemory {
 	searchDirs := cgroupMemorySearchDirs()
+
+	var current, file uint64
+	var haveUsage bool
+	for _, dir := range searchDirs {
+		if c, f, ok := readCgroupMemoryUsage(dir); ok {
+			current, file = c, f
+			haveUsage = true
+			break
+		}
+	}
+	if !haveUsage {
+		return CgroupMemory{}
+	}
 
 	var max uint64
 	for _, dir := range searchDirs {
@@ -216,20 +220,6 @@ func ReadCgroupMemory(limitFallback uint64) CgroupMemory {
 			break
 		}
 	}
-
-	var current uint64
-	var haveCurrent bool
-	for _, dir := range searchDirs {
-		if c, ok := readCgroupMemoryCurrent(dir); ok {
-			current = c
-			haveCurrent = true
-			break
-		}
-	}
-	if !haveCurrent {
-		return CgroupMemory{}
-	}
-
 	if max == 0 && limitFallback > 0 && (IsContainer() || LxcfsActive()) {
 		max = limitFallback
 	}
@@ -240,8 +230,17 @@ func ReadCgroupMemory(limitFallback uint64) CgroupMemory {
 	return CgroupMemory{
 		Max:     max,
 		Current: current,
+		File:    file,
 		OK:      true,
 	}
+}
+
+func readCgroupMemoryUsage(dir string) (current, file uint64, ok bool) {
+	current, ok = readCgroupMemoryCurrent(dir)
+	if !ok {
+		return 0, 0, false
+	}
+	return current, readCgroupMemoryFile(dir), true
 }
 
 func cgroupV2Dir() string {
@@ -264,6 +263,18 @@ func cgroupV2Dir() string {
 }
 
 func cgroupMemorySearchDirs() []string {
+	if LxcfsActive() || IsContainer() {
+		return cgroupNamespaceRootDirs()
+	}
+	return cgroupProcessMemoryDirs()
+}
+
+func cgroupNamespaceRootDirs() []string {
+	root := cgroupMemoryBaseDir()
+	return uniqueDirs(root, root+"/.lxc", "/sys/fs/cgroup", "/sys/fs/cgroup/.lxc")
+}
+
+func cgroupProcessMemoryDirs() []string {
 	var dirs []string
 	for dir := cgroupV2Dir(); strings.HasPrefix(dir, "/sys/fs/cgroup"); dir = filepath.Dir(dir) {
 		dirs = append(dirs, dir)
@@ -271,7 +282,7 @@ func cgroupMemorySearchDirs() []string {
 			break
 		}
 	}
-	return uniqueDirs(append(dirs, cgroupMemoryBaseDir()+"/.lxc", "/sys/fs/cgroup/.lxc")...)
+	return uniqueDirs(dirs...)
 }
 
 func cgroupMemoryBaseDir() string {
@@ -329,6 +340,34 @@ func readCgroupMemoryCurrent(dir string) (uint64, bool) {
 		return current, true
 	}
 	return 0, false
+}
+
+func readCgroupMemoryFile(dir string) uint64 {
+	f, err := os.Open(dir + "/memory.stat")
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+
+	var file uint64
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 2 {
+			continue
+		}
+		value, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		switch fields[0] {
+		case "file":
+			return value
+		case "total_cache":
+			file = value
+		}
+	}
+	return file
 }
 
 func ReadIOStats() map[string]CgroupIOEntry {

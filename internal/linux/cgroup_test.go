@@ -40,6 +40,15 @@ func TestParseCPUSet(t *testing.T) {
 	}
 }
 
+func TestCgroupNamespaceRootDirs(t *testing.T) {
+	t.Parallel()
+
+	got := cgroupNamespaceRootDirs()
+	if got[0] != "/sys/fs/cgroup" {
+		t.Fatalf("first dir = %q, want /sys/fs/cgroup (%#v)", got[0], got)
+	}
+}
+
 func TestCgroupMemorySearchDirs(t *testing.T) {
 	t.Parallel()
 
@@ -47,18 +56,14 @@ func TestCgroupMemorySearchDirs(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("expected at least one cgroup dir")
 	}
+	if LxcfsActive() || IsContainer() {
+		if got[0] != "/sys/fs/cgroup" {
+			t.Fatalf("container first dir = %q, want /sys/fs/cgroup (%#v)", got[0], got)
+		}
+		return
+	}
 	if got[0] != cgroupV2Dir() {
 		t.Fatalf("first dir = %q, want %q", got[0], cgroupV2Dir())
-	}
-	foundRoot := false
-	for _, dir := range got {
-		if dir == "/sys/fs/cgroup" {
-			foundRoot = true
-			break
-		}
-	}
-	if !foundRoot {
-		t.Fatalf("dirs = %#v, missing /sys/fs/cgroup", got)
 	}
 }
 
@@ -71,11 +76,11 @@ func TestCgroupMemoryUsage(t *testing.T) {
 		want uint64
 	}{
 		{
-			name: "cgroup current",
+			name: "proxmox current minus file",
 			mem: CgroupMemory{
-				Max: 8e9, Current: 628408320, OK: true,
+				Max: 8589934592, Current: 1069248512, File: 811769856, OK: true,
 			},
-			want: 628408320,
+			want: 257478656,
 		},
 		{
 			name: "not ok",
@@ -103,11 +108,11 @@ func TestCgroupMemoryAvailable(t *testing.T) {
 		want uint64
 	}{
 		{
-			name: "cgroup current",
+			name: "proxmox current minus file",
 			mem: CgroupMemory{
-				Max: 8e9, Current: 628408320, OK: true,
+				Max: 8589934592, Current: 1069248512, File: 811769856, OK: true,
 			},
-			want: 8e9 - 628408320,
+			want: 8589934592 - 257478656,
 		},
 		{
 			name: "not ok",
