@@ -14,7 +14,10 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-const DefaultVersion = "2.0.0"
+const (
+	DefaultVersion     = "2.0.0"
+	heartbeatInterval  = 30 * time.Second
+)
 
 type Agent struct {
 	Version       string
@@ -61,6 +64,7 @@ func (a *Agent) Run(ctx context.Context) {
 
 	go a.runSampleLoop(ctx, sampleInterval)
 	go a.runSlowLoop(ctx, slowInterval)
+	go a.runHeartbeatLoop(ctx)
 	a.sampler.WaitReady(3 * sampleInterval)
 	a.pushOnce()
 
@@ -121,6 +125,28 @@ func (a *Agent) runSampleLoop(ctx context.Context, _ time.Duration) {
 				slog.Warn("sample tick", "err", err)
 			}
 		}
+	}
+}
+
+func (a *Agent) runHeartbeatLoop(ctx context.Context) {
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+
+	a.heartbeatOnce()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.heartbeatOnce()
+		}
+	}
+}
+
+func (a *Agent) heartbeatOnce() {
+	config := a.currentConfig()
+	if err := ingest.Heartbeat(config, a.Version); err != nil {
+		slog.Warn("heartbeat", "err", err)
 	}
 }
 

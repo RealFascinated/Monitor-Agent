@@ -13,21 +13,21 @@ func TestShouldRetry(t *testing.T) {
 	if !shouldRetry(fmt.Errorf("network error")) {
 		t.Fatal("expected retry on generic error")
 	}
-	if !shouldRetry(&httpStatusError{status: http.StatusServiceUnavailable}) {
+	if !shouldRetry(&httpStatusError{op: "push ingest data", status: http.StatusServiceUnavailable}) {
 		t.Fatal("expected retry on 5xx")
 	}
-	if shouldRetry(&httpStatusError{status: http.StatusBadRequest}) {
+	if shouldRetry(&httpStatusError{op: "push ingest data", status: http.StatusBadRequest}) {
 		t.Fatal("expected no retry on 4xx")
 	}
 }
 
 func TestHTTPStatusError(t *testing.T) {
-	err := &httpStatusError{status: 500}
+	err := &httpStatusError{op: "push ingest data", status: 500}
 	if got := err.Error(); got != "push ingest data: status 500" {
 		t.Fatalf("unexpected error: %q", got)
 	}
 
-	err = &httpStatusError{status: 400, body: []byte("bad request")}
+	err = &httpStatusError{op: "push ingest data", status: 400, body: []byte("bad request")}
 	if got := err.Error(); got != "push ingest data: status 400: bad request" {
 		t.Fatalf("unexpected error: %q", got)
 	}
@@ -48,8 +48,8 @@ func TestPushOnceSuccess(t *testing.T) {
 	defer srv.Close()
 
 	cfg := &Config{ApiEndpoint: srv.URL, IngestToken: "secret"}
-	if err := pushOnce(cfg, []byte(`{"ok":true}`), "2.0.0"); err != nil {
-		t.Fatalf("pushOnce: %v", err)
+	if err := post("push ingest data", cfg.ApiEndpoint, cfg.IngestToken, "2.0.0", []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("post: %v", err)
 	}
 	if auth != "Bearer secret" {
 		t.Fatalf("auth header: %q", auth)
@@ -70,7 +70,7 @@ func TestPushOnceStatusError(t *testing.T) {
 	defer srv.Close()
 
 	cfg := &Config{ApiEndpoint: srv.URL, IngestToken: "secret"}
-	err := pushOnce(cfg, []byte(`{}`), "")
+	err := post("push ingest data", cfg.ApiEndpoint, cfg.IngestToken, "", []byte(`{}`))
 	if err == nil {
 		t.Fatal("expected error")
 	}
