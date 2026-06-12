@@ -48,6 +48,7 @@ func TestStartCronInvalidScheduleKeepsExisting(t *testing.T) {
 	if err := a.startCron("*/5 * * * * *"); err != nil {
 		t.Fatalf("startCron valid: %v", err)
 	}
+	defer a.stopCron()
 	first := a.cron
 
 	if err := a.startCron("not a cron"); err == nil {
