@@ -14,8 +14,7 @@ func TestOverlayCgroupMemory(t *testing.T) {
 	snap := Snapshot{Total: 8e9, Available: 490e6}
 	cg := linux.CgroupMemory{
 		Max:     8e9,
-		Current: 7898e6,
-		File:    7600e6,
+		Current: 628408320,
 		OK:      true,
 	}
 
@@ -23,10 +22,10 @@ func TestOverlayCgroupMemory(t *testing.T) {
 	if got.Total != 8e9 {
 		t.Fatalf("total = %v, want 8e9", got.Total)
 	}
-	if got.Usage != 298e6 {
-		t.Fatalf("usage = %v, want 298e6", got.Usage)
+	if got.Usage != 628408320 {
+		t.Fatalf("usage = %v, want 628408320", got.Usage)
 	}
-	if got.Available != 8e9-298e6 {
-		t.Fatalf("available = %v, want %v", got.Available, 8e9-298e6)
+	if got.Available != 8e9-628408320 {
+		t.Fatalf("available = %v, want %v", got.Available, 8e9-628408320)
 	}
 }

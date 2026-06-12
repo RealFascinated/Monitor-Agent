@@ -172,17 +172,18 @@ func EffectiveCPUs(dir string) (map[string]struct{}, bool) {
 }
 
 type CgroupMemory struct {
-	Max, Current, File uint64
-	OK                 bool
+	Max, Current uint64
+	OK           bool
 }
 
-// Usage reports cgroup memory consumption excluding the file-backed cache
-// counter (page cache, tmpfs, and shmem), matching Proxmox LXC accounting.
+// Usage is memory.current — total memory charged to the cgroup, including
+// anonymous memory, shmem, and page cache. This matches what counts against
+// the container limit from inside the cgroup namespace.
 func (m CgroupMemory) Usage() uint64 {
-	if !m.OK || m.Current <= m.File {
+	if !m.OK {
 		return 0
 	}
-	return m.Current - m.File
+	return m.Current
 }
 
 // Available is the cgroup memory limit minus Usage.
@@ -190,11 +191,10 @@ func (m CgroupMemory) Available() uint64 {
 	if !m.OK {
 		return 0
 	}
-	usage := m.Usage()
-	if usage >= m.Max {
+	if m.Current >= m.Max {
 		return 0
 	}
-	return m.Max - usage
+	return m.Max - m.Current
 }
 
 func ReadCgroupMemory(limitFallback uint64) CgroupMemory {
@@ -209,15 +209,15 @@ func ReadCgroupMemory(limitFallback uint64) CgroupMemory {
 	}
 
 	var current uint64
-	var currentDir string
+	var haveCurrent bool
 	for _, dir := range searchDirs {
 		if c, ok := readCgroupMemoryCurrent(dir); ok {
 			current = c
-			currentDir = dir
+			haveCurrent = true
 			break
 		}
 	}
-	if currentDir == "" {
+	if !haveCurrent {
 		return CgroupMemory{}
 	}
 
@@ -228,20 +228,9 @@ func ReadCgroupMemory(limitFallback uint64) CgroupMemory {
 		return CgroupMemory{}
 	}
 
-	file := readCgroupMemoryFile(currentDir)
-	if file == 0 {
-		for _, dir := range searchDirs {
-			if f := readCgroupMemoryFile(dir); f > 0 {
-				file = f
-				break
-			}
-		}
-	}
-
 	return CgroupMemory{
 		Max:     max,
 		Current: current,
-		File:    file,
 		OK:      true,
 	}
 }
@@ -351,34 +340,6 @@ func readCgroupMemoryCurrent(dir string) (uint64, bool) {
 		return current, true
 	}
 	return 0, false
-}
-
-func readCgroupMemoryFile(dir string) uint64 {
-	f, err := os.Open(dir + "/memory.stat")
-	if err != nil {
-		return 0
-	}
-	defer f.Close()
-
-	var file uint64
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) != 2 {
-			continue
-		}
-		value, err := strconv.ParseUint(fields[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		switch fields[0] {
-		case "file":
-			return value
-		case "total_cache":
-			file = value
-		}
-	}
-	return file
 }
 
 func ReadIOStats() map[string]CgroupIOEntry {

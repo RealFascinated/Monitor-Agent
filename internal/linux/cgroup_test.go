@@ -79,18 +79,11 @@ func TestCgroupMemoryUsage(t *testing.T) {
 		want uint64
 	}{
 		{
-			name: "postgres shmem in file",
+			name: "cgroup current",
 			mem: CgroupMemory{
-				Max: 8e9, Current: 7898e6, File: 7600e6, OK: true,
+				Max: 8e9, Current: 628408320, OK: true,
 			},
-			want: 298e6,
-		},
-		{
-			name: "no file cache",
-			mem: CgroupMemory{
-				Max: 4e9, Current: 1e9, File: 0, OK: true,
-			},
-			want: 1e9,
+			want: 628408320,
 		},
 		{
 			name: "not ok",
@@ -118,11 +111,11 @@ func TestCgroupMemoryAvailable(t *testing.T) {
 		want uint64
 	}{
 		{
-			name: "postgres shmem in file",
+			name: "cgroup current",
 			mem: CgroupMemory{
-				Max: 8e9, Current: 7898e6, File: 7600e6, OK: true,
+				Max: 8e9, Current: 628408320, OK: true,
 			},
-			want: 8e9 - 298e6,
+			want: 8e9 - 628408320,
 		},
 		{
 			name: "not ok",
