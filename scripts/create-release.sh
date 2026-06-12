@@ -6,7 +6,7 @@ usage() {
 Create and push an agent release tag.
 
 Usage:
-  $0 VERSION [-m MESSAGE] [--dry-run]
+  $0 VERSION [-m MESSAGE] [--force] [--dry-run]
 
 VERSION may be "2.0.20" or "agent/v2.0.20".
 
@@ -16,6 +16,7 @@ publish a GitHub release, and push Docker images to GHCR.
 Examples:
   $0 2.0.20
   $0 agent/v2.0.20 -m "Fix disk metrics on ZFS"
+  $0 2.0.20 --force
   $0 2.0.20 --dry-run
 EOF
 }
@@ -27,6 +28,7 @@ die() {
 
 version=""
 message=""
+force=false
 dry_run=false
 
 while [[ $# -gt 0 ]]; do
@@ -39,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || die "missing value for -m"
       message="$2"
       shift 2
+      ;;
+    -f|--force)
+      force=true
+      shift
       ;;
     --dry-run)
       dry_run=true
@@ -70,8 +76,12 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   die "working tree is not clean; commit or stash changes first"
 fi
 
-if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-  die "tag already exists: ${tag}"
+tag_exists=false
+if git show-ref --verify --quiet "refs/tags/${tag}"; then
+  tag_exists=true
+  if [[ "$force" != true ]]; then
+    die "tag already exists: ${tag} (use --force to move it)"
+  fi
 fi
 
 latest="$(git tag -l 'agent/v*' --sort=-v:refname | head -n1 || true)"
@@ -81,6 +91,7 @@ printf 'Tag:     %s\n' "$tag"
 printf 'Commit:  %s\n' "$commit"
 [[ -n "$latest" ]] && printf 'Latest:  %s\n' "$latest"
 printf 'Remote:  origin\n'
+[[ "$tag_exists" == true ]] && printf 'Force:   will move existing tag\n'
 
 if [[ -z "$message" ]]; then
   message="Release ${version}"
@@ -91,10 +102,18 @@ if [[ "$dry_run" == true ]]; then
   exit 0
 fi
 
-read -r -p "Create and push ${tag}? [y/N] " confirm
+if [[ "$force" == true ]]; then
+  read -r -p "Force-create and push ${tag}? [y/N] " confirm
+else
+  read -r -p "Create and push ${tag}? [y/N] " confirm
+fi
 [[ "$confirm" == [yY] || "$confirm" == [yY][eE][sS] ]] || die "aborted"
 
-git tag -a "$tag" -m "$message"
-git push origin "$tag"
+git tag -fa "$tag" -m "$message"
+if [[ "$force" == true ]]; then
+  git push --force origin "$tag"
+else
+  git push origin "$tag"
+fi
 
 printf '\nPushed %s. GitHub Actions will build binaries and publish the release.\n' "$tag"
