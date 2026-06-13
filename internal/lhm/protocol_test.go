@@ -60,6 +60,20 @@ func TestParseServerMetricsJSON(t *testing.T) {
 	}
 }
 
+func TestParseServerMetricsJSONMissingEncoderDecoder(t *testing.T) {
+	raw := `{"gpus":[{"deviceId":"gpu-1","name":"GPU","vendor":"nvidia","usagePercent":10.0}]}`
+	snap, err := ParseServerMetricsJSON([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.GPUs) != 1 {
+		t.Fatalf("gpus: %+v", snap.GPUs)
+	}
+	if snap.GPUs[0].EncoderUsagePercent != 0 || snap.GPUs[0].DecoderUsagePercent != 0 {
+		t.Fatalf("encoder/decoder: %+v", snap.GPUs[0])
+	}
+}
+
 func TestApplyServerSnapshotPartialMemory(t *testing.T) {
 	used := int64(10)
 	snap := ServerSnapshot{

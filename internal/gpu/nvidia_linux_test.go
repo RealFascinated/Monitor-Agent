@@ -40,6 +40,19 @@ func TestParseNVIDIALineQuotedName(t *testing.T) {
 		t.Fatalf("name: %q", metric.Name)
 	}
 	if metric.PowerWatts != 0 {
-		t.Fatalf("power should be omitted: %v", metric.PowerWatts)
+		t.Fatalf("power: %v", metric.PowerWatts)
+	}
+	if metric.EncoderUsagePercent != 0 || metric.DecoderUsagePercent != 0 {
+		t.Fatalf("encoder/decoder: %+v", metric)
+	}
+}
+
+func TestParseNVIDIALineZeroEncoderDecoder(t *testing.T) {
+	metric, ok := parseNVIDIALine(`NVIDIA T400, GPU-00000000-0000-0000-0000-000000000001, 0, 0, 35, 0, 4096, [N/A], 0, 0`)
+	if !ok {
+		t.Fatal("expected ok")
+	}
+	if metric.EncoderUsagePercent != 0 || metric.DecoderUsagePercent != 0 {
+		t.Fatalf("encoder/decoder: %+v", metric)
 	}
 }
