@@ -74,9 +74,9 @@ type ServerMetrics struct {
 	RunningProcesses         int64   `json:"runningProcesses"`
 	ContextSwitchesPerSecond int64   `json:"contextSwitchesPerSecond"`
 	InterruptsPerSecond      int64   `json:"interruptsPerSecond"`
-	FdOpen                   int64   `json:"fdOpen"`
-	FdMax                    int64   `json:"fdMax"`
-	FdUsagePercent           float64 `json:"fdUsagePercent"`
+	FdOpen                   int64   `json:"fdOpen,omitempty"`
+	FdMax                    int64   `json:"fdMax,omitempty"`
+	FdUsagePercent           float64 `json:"fdUsagePercent,omitempty"`
 	OomKillsTotal            int64   `json:"oomKillsTotal"`
 	OomKillsPerSecond        int64   `json:"oomKillsPerSecond"`
 	CPUCoreMetrics           []CPUCoreMetric      `json:"cpuCoreMetrics,omitempty"`
