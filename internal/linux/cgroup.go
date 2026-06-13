@@ -342,6 +342,38 @@ func readCgroupMemoryCurrent(dir string) (uint64, bool) {
 	return 0, false
 }
 
+// ReadCgroupOOMKills returns the cumulative oom_kill count from memory.events.
+func ReadCgroupOOMKills() (uint64, bool) {
+	for _, dir := range cgroupMemorySearchDirs() {
+		if total, ok := readCgroupMemoryEventsOOMKill(dir); ok {
+			return total, true
+		}
+	}
+	return 0, false
+}
+
+func readCgroupMemoryEventsOOMKill(dir string) (uint64, bool) {
+	f, err := os.Open(dir + "/memory.events")
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 2 || fields[0] != "oom_kill" {
+			continue
+		}
+		total, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return total, true
+	}
+	return 0, false
+}
+
 func readCgroupMemoryFile(dir string) uint64 {
 	f, err := os.Open(dir + "/memory.stat")
 	if err != nil {

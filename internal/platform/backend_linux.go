@@ -13,8 +13,10 @@ import (
 	gpupkg "fascinated.cc/monitor/agent/internal/gpu"
 	"fascinated.cc/monitor/agent/internal/ingest"
 	"fascinated.cc/monitor/agent/internal/linux"
+	"fascinated.cc/monitor/agent/internal/fd"
 	"fascinated.cc/monitor/agent/internal/loadavg"
 	"fascinated.cc/monitor/agent/internal/memory"
+	"fascinated.cc/monitor/agent/internal/oom"
 	"fascinated.cc/monitor/agent/internal/network"
 	"fascinated.cc/monitor/agent/internal/thermal"
 	"fascinated.cc/monitor/agent/internal/zfs"
@@ -36,6 +38,9 @@ type linuxTickState struct {
 	zfsIOBefore     map[string]zfs.PoolIO
 	arcBefore       zfs.ArcSnapshot
 	hasArcBefore    bool
+
+	oomKillsBefore uint64
+	hasOomBefore   bool
 }
 
 type linuxBackend struct {
@@ -160,6 +165,11 @@ func (b *linuxBackend) Tick(ready bool) (TickUpdate, error) {
 	metrics.RunningProcesses = avg.RunningProcesses
 
 	memory.ApplyTo(&metrics, memory.Read())
+	fd.ApplyTo(&metrics, fd.Read())
+	oomAfter, hasOom := oom.Read()
+	if hasOom {
+		oom.ApplyRate(&metrics, prev.oomKillsBefore, oomAfter, prev.hasOomBefore, elapsed)
+	}
 
 	update.InterfaceMetrics = network.ComputeMetrics(prev.netBefore, netAfter, elapsed)
 
@@ -213,6 +223,10 @@ func (b *linuxBackend) Tick(ready bool) (TickUpdate, error) {
 		hasPowerBefore:  hasPowerAfter,
 		netBefore:       netAfter,
 		zfsIOBefore:     zfsIOAfter,
+	}
+	if hasOom {
+		b.state.oomKillsBefore = oomAfter
+		b.state.hasOomBefore = true
 	}
 	if b.opts.HasZFS {
 		b.state.arcBefore, b.state.hasArcBefore = zfs.ReadArcSnapshot()
