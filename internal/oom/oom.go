@@ -16,6 +16,6 @@ func ApplyRate(metrics *ingest.ServerMetrics, prev, curr uint64, hasPrev bool, e
 	if !hasPrev {
 		return
 	}
-	metrics.OomKillsTotal = int64(curr)
+	metrics.OomKillsTotal = iostats.Uint64ToInt64(curr)
 	metrics.OomKillsPerSecond = iostats.PerSecond(delta.Uint64(curr, prev), elapsed)
 }
