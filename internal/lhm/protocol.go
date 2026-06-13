@@ -17,14 +17,16 @@ type serverMetricsJSON struct {
 }
 
 type gpuMetricJSON struct {
-	DeviceID           string   `json:"deviceId"`
-	Name               string   `json:"name"`
-	Vendor             string   `json:"vendor"`
-	UsagePercent       *float64 `json:"usagePercent"`
-	MemoryUsedBytes    *int64   `json:"memoryUsedBytes"`
-	MemoryTotalBytes   *int64   `json:"memoryTotalBytes"`
-	TemperatureCelsius *float64 `json:"temperatureCelsius"`
-	PowerWatts         *float64 `json:"powerWatts"`
+	DeviceID              string   `json:"deviceId"`
+	Name                  string   `json:"name"`
+	Vendor                string   `json:"vendor"`
+	UsagePercent          *float64 `json:"usagePercent"`
+	EncoderUsagePercent   *float64 `json:"encoderUsagePercent"`
+	DecoderUsagePercent   *float64 `json:"decoderUsagePercent"`
+	MemoryUsedBytes       *int64   `json:"memoryUsedBytes"`
+	MemoryTotalBytes      *int64   `json:"memoryTotalBytes"`
+	TemperatureCelsius    *float64 `json:"temperatureCelsius"`
+	PowerWatts            *float64 `json:"powerWatts"`
 }
 
 type coreMetricJSON struct {
@@ -110,6 +112,12 @@ func snapshotFromJSON(raw serverMetricsJSON) ServerSnapshot {
 			}
 			if g.UsagePercent != nil {
 				metric.UsagePercent = *g.UsagePercent
+			}
+			if g.EncoderUsagePercent != nil {
+				metric.EncoderUsagePercent = *g.EncoderUsagePercent
+			}
+			if g.DecoderUsagePercent != nil {
+				metric.DecoderUsagePercent = *g.DecoderUsagePercent
 			}
 			if g.MemoryUsedBytes != nil {
 				metric.MemoryUsedBytes = *g.MemoryUsedBytes

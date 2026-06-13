@@ -12,7 +12,7 @@ import (
 	"fascinated.cc/monitor/agent/internal/ingest"
 )
 
-const nvidiaQuery = "name,uuid,utilization.gpu,utilization.memory,temperature.gpu,memory.used,memory.total,power.draw"
+const nvidiaQuery = "name,uuid,utilization.gpu,utilization.memory,temperature.gpu,memory.used,memory.total,power.draw,utilization.encoder,utilization.decoder"
 
 func collectNVIDIA() []ingest.GPUMetric {
 	if _, err := exec.LookPath("nvidia-smi"); err != nil {
@@ -71,6 +71,14 @@ func parseNVIDIALine(line string) (ingest.GPUMetric, bool) {
 	}
 	if v, ok := parseOptionalFloat(fields[7]); ok {
 		metric.PowerWatts = v
+	}
+	if len(fields) >= 10 {
+		if v, ok := parseOptionalFloat(fields[8]); ok {
+			metric.EncoderUsagePercent = v
+		}
+		if v, ok := parseOptionalFloat(fields[9]); ok {
+			metric.DecoderUsagePercent = v
+		}
 	}
 	return metric, metric.Name != "" && rawID != ""
 }

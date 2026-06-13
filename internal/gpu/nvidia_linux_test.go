@@ -9,7 +9,7 @@ import (
 )
 
 func TestParseNVIDIALine(t *testing.T) {
-	metric, ok := parseNVIDIALine(`NVIDIA GeForce RTX 4090, GPU-11111111-2222-3333-4444-555555555555, 12, 3, 45, 1024, 24576, 125.50`)
+	metric, ok := parseNVIDIALine(`NVIDIA GeForce RTX 4090, GPU-11111111-2222-3333-4444-555555555555, 12, 3, 45, 1024, 24576, 125.50, 78, 22`)
 	if !ok {
 		t.Fatal("expected ok")
 	}
@@ -25,6 +25,9 @@ func TestParseNVIDIALine(t *testing.T) {
 	}
 	if metric.TemperatureCelsius != 45 || metric.PowerWatts != 125.5 {
 		t.Fatalf("temp/power: %+v", metric)
+	}
+	if metric.EncoderUsagePercent != 78 || metric.DecoderUsagePercent != 22 {
+		t.Fatalf("encoder/decoder: %+v", metric)
 	}
 }
 

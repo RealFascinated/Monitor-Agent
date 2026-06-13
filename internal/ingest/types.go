@@ -14,14 +14,16 @@ type Data struct {
 }
 
 type GPUMetric struct {
-	DeviceID             string  `json:"deviceId"`
-	Name                 string  `json:"name"`
-	Vendor               string  `json:"vendor"`
-	UsagePercent         float64 `json:"usagePercent"`
-	MemoryUsedBytes      int64   `json:"memoryUsedBytes,omitempty"`
-	MemoryTotalBytes     int64   `json:"memoryTotalBytes,omitempty"`
-	TemperatureCelsius   float64 `json:"temperatureCelsius,omitempty"`
-	PowerWatts           float64 `json:"powerWatts,omitempty"`
+	DeviceID              string  `json:"deviceId"`
+	Name                  string  `json:"name"`
+	Vendor                string  `json:"vendor"`
+	UsagePercent          float64 `json:"usagePercent"`
+	EncoderUsagePercent   float64 `json:"encoderUsagePercent,omitempty"`
+	DecoderUsagePercent   float64 `json:"decoderUsagePercent,omitempty"`
+	MemoryUsedBytes       int64   `json:"memoryUsedBytes,omitempty"`
+	MemoryTotalBytes      int64   `json:"memoryTotalBytes,omitempty"`
+	TemperatureCelsius    float64 `json:"temperatureCelsius,omitempty"`
+	PowerWatts            float64 `json:"powerWatts,omitempty"`
 }
 
 type ServerDetails struct {

@@ -39,6 +39,8 @@ internal sealed class GpuEntry
     public string Name = "";
     public string Vendor = "";
     public double? UsagePercent;
+    public double? EncoderUsagePercent;
+    public double? DecoderUsagePercent;
     public long? MemoryUsedBytes;
     public long? MemoryTotalBytes;
     public double? TemperatureCelsius;
@@ -219,6 +221,8 @@ internal static class Program
 
     static bool GpuHasData(GpuEntry gpu) =>
         gpu.UsagePercent.HasValue ||
+        gpu.EncoderUsagePercent.HasValue ||
+        gpu.DecoderUsagePercent.HasValue ||
         gpu.MemoryUsedBytes.HasValue ||
         gpu.MemoryTotalBytes.HasValue ||
         gpu.TemperatureCelsius.HasValue ||
@@ -237,6 +241,7 @@ internal static class Program
             switch (sensor.SensorType)
             {
                 case SensorType.Load:
+                    ApplyGpuEncoderDecoderLoad(gpu, name, value);
                     ApplyGpuUsageLoad(gpu, name, value);
                     break;
                 case SensorType.Temperature:
@@ -252,6 +257,24 @@ internal static class Program
                     break;
             }
         }
+    }
+
+    static void ApplyGpuEncoderDecoderLoad(GpuEntry gpu, string name, float value)
+    {
+        if (name.Contains("Decode", StringComparison.OrdinalIgnoreCase))
+        {
+            gpu.DecoderUsagePercent = PickMaxNullable(gpu.DecoderUsagePercent, value);
+            return;
+        }
+        if (name.Contains("Encode", StringComparison.OrdinalIgnoreCase))
+            gpu.EncoderUsagePercent = PickMaxNullable(gpu.EncoderUsagePercent, value);
+    }
+
+    static double? PickMaxNullable(double? current, float value)
+    {
+        if (!current.HasValue)
+            return value;
+        return Math.Max(current.Value, value);
     }
 
     static void ApplyGpuUsageLoad(GpuEntry gpu, string name, float value)
@@ -589,6 +612,10 @@ internal static class Program
             AppendString(sb, g.DeviceId);
             sb.Append(",\"usagePercent\":");
             AppendNullableDouble(sb, g.UsagePercent);
+            sb.Append(",\"encoderUsagePercent\":");
+            AppendNullableDouble(sb, g.EncoderUsagePercent);
+            sb.Append(",\"decoderUsagePercent\":");
+            AppendNullableDouble(sb, g.DecoderUsagePercent);
             sb.Append(",\"memoryUsedBytes\":");
             AppendNullableLong(sb, g.MemoryUsedBytes);
             sb.Append(",\"memoryTotalBytes\":");

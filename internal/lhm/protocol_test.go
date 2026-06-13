@@ -13,7 +13,7 @@ func TestParseServerMetricsJSON(t *testing.T) {
 		"cores": [{"cpu":"0","usagePercent":40},{"cpu":"1","usagePercent":5}],
 		"memory": {"used":100,"available":50,"total":150},
 		"temperatures": [{"sensor":"cpu_die","celsius":46.9}],
-		"gpus":[{"deviceId":"\\\\?\\PCI#VEN_10DE&DEV_2684","name":"NVIDIA GeForce RTX 4090","vendor":"nvidia","usagePercent":22.5,"memoryUsedBytes":1073741824,"memoryTotalBytes":25769803776,"temperatureCelsius":51.0,"powerWatts":180.0}]
+		"gpus":[{"deviceId":"\\\\?\\PCI#VEN_10DE&DEV_2684","name":"NVIDIA GeForce RTX 4090","vendor":"nvidia","usagePercent":22.5,"encoderUsagePercent":80.0,"decoderUsagePercent":15.0,"memoryUsedBytes":1073741824,"memoryTotalBytes":25769803776,"temperatureCelsius":51.0,"powerWatts":180.0}]
 	}`
 	snap, err := ParseServerMetricsJSON([]byte(raw))
 	if err != nil {
@@ -51,6 +51,9 @@ func TestParseServerMetricsJSON(t *testing.T) {
 	}
 	if len(snap.GPUs) != 1 || snap.GPUs[0].Vendor != "nvidia" || snap.GPUs[0].UsagePercent != 22.5 {
 		t.Fatalf("gpus: %+v", snap.GPUs)
+	}
+	if snap.GPUs[0].EncoderUsagePercent != 80.0 || snap.GPUs[0].DecoderUsagePercent != 15.0 {
+		t.Fatalf("encoder/decoder: %+v", snap.GPUs[0])
 	}
 	if snap.GPUs[0].DeviceID != ingest.HashDeviceID(`\\?\PCI#VEN_10DE&DEV_2684`) {
 		t.Fatalf("device id: got %q", snap.GPUs[0].DeviceID)
