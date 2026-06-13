@@ -12,8 +12,11 @@ func TestApplyToUnlimitedFileMax(t *testing.T) {
 
 	var metrics ingest.ServerMetrics
 	ApplyTo(&metrics, Snapshot{Open: 13706, Max: math.MaxInt64})
-	if metrics.FdOpen != 0 || metrics.FdMax != 0 || metrics.FdUsagePercent != 0 {
-		t.Fatalf("expected no fd metrics for unlimited max, got %+v", metrics)
+	if metrics.FdOpen != 13706 {
+		t.Fatalf("FdOpen = %d, want 13706", metrics.FdOpen)
+	}
+	if metrics.FdMax != 0 || metrics.FdUsagePercent != 0 {
+		t.Fatalf("expected no max/usage for unlimited, got max=%d usage=%v", metrics.FdMax, metrics.FdUsagePercent)
 	}
 }
 
