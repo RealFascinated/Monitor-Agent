@@ -12,23 +12,23 @@ type Options struct {
 }
 
 type TickUpdate struct {
-	Skip                 bool
-	Ready                bool
-	ClockMHz             float64
-	ServerMetrics        ingest.ServerMetrics
-	InterfaceMetrics     []ingest.InterfaceMetrics
-	DiskMetrics          []ingest.DiskMetric
-	ZfsArcMetrics        *ingest.ZFSArcMetrics
-	TCPConnectionMetrics []ingest.TCPConnectionMetric
+	Skip             bool
+	Ready            bool
+	ClockMHz         float64
+	ServerMetrics    ingest.ServerMetrics
+	InterfaceMetrics []ingest.InterfaceMetrics
+	DiskMetrics      []ingest.DiskMetric
+	ZfsArcMetrics    *ingest.ZFSArcMetrics
 }
 
 type SlowUpdate struct {
-	ZfsPoolMetrics   []ingest.ZfsPoolMetric
-	DockerContainers []ingest.DockerContainerMetric
-	GPUMetrics       []ingest.GPUMetric
-	ServerMetrics    ingest.ServerMetrics
-	Mounts    []disk.Mount
-	HasMounts bool
+	ZfsPoolMetrics       []ingest.ZfsPoolMetric
+	DockerContainers     []ingest.DockerContainerMetric
+	GPUMetrics           []ingest.GPUMetric
+	TCPConnectionMetrics []ingest.TCPConnectionMetric
+	ServerMetrics        ingest.ServerMetrics
+	Mounts               []disk.Mount
+	HasMounts            bool
 }
 
 type Backend interface {

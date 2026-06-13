@@ -6,6 +6,10 @@ import "fascinated.cc/monitor/agent/internal/ingest"
 
 type PoolStatusSnapshot struct{}
 
+func EmptyPoolStatusSnapshot() PoolStatusSnapshot {
+	return PoolStatusSnapshot{}
+}
+
 func ReadPoolStatus() PoolStatusSnapshot {
 	return PoolStatusSnapshot{}
 }

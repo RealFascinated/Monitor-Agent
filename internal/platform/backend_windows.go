@@ -42,16 +42,13 @@ type windowsBackend struct {
 
 	state       windowsTickState
 	initialized bool
-
-	mounts      []disk.Mount
-	poolStatus  zfs.PoolStatusSnapshot
-	poolIORates map[string]zfs.PoolIORates
+	shared      *windowsBackendShared
 }
 
 func newWindowsBackend(opts Options) *windowsBackend {
 	return &windowsBackend{
-		opts:        opts,
-		poolIORates: map[string]zfs.PoolIORates{},
+		opts:   opts,
+		shared: newWindowsBackendShared(),
 	}
 }
 
@@ -65,11 +62,11 @@ func (b *windowsBackend) Tick(ready bool) (TickUpdate, error) {
 	perCPU, _ := cpu.Times(true)
 
 	var (
-		netBefore, netAfter []network.Counter
-		afterIO             map[string]disk.IOCounters
-		afterZFS            map[string]zfs.PoolIO
-		netErr              error
-		ioErr               error
+		netAfter []network.Counter
+		afterIO  map[string]disk.IOCounters
+		afterZFS map[string]zfs.PoolIO
+		netErr   error
+		ioErr    error
 	)
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -98,12 +95,11 @@ func (b *windowsBackend) Tick(ready bool) (TickUpdate, error) {
 	if !b.initialized {
 		cpupkg.BeginIowaitSample()
 		cpupkg.BeginCPUPowerSample()
-		netBefore = netAfter
 		b.state = windowsTickState{
 			lastAt:         now,
 			cpuBefore:      cpuAgg[0],
 			perCPUBefore:   perCPU,
-			netBefore:      netBefore,
+			netBefore:      netAfter,
 			beforeIO:       afterIO,
 			countersBefore: countersAfter,
 			countersPerSec: countersPerSecond,
@@ -125,6 +121,7 @@ func (b *windowsBackend) Tick(ready bool) (TickUpdate, error) {
 		update.DiskMetrics = []ingest.DiskMetric{}
 	}
 
+	cpuStart := time.Now()
 	metrics := cpupkg.ComputeWindowsTick(cpupkg.WindowsTickInput{
 		PrevCPU:        prev.cpuBefore,
 		CurrCPU:        cpuAgg[0],
@@ -135,6 +132,7 @@ func (b *windowsBackend) Tick(ready bool) (TickUpdate, error) {
 		CountersPerSec: prev.countersPerSec,
 		Elapsed:        elapsed,
 	})
+	profilePhase("tick_cpu", cpuStart)
 	memory.ApplyTo(&metrics, memory.Read())
 
 	avg := loadavg.Read()
@@ -142,17 +140,22 @@ func (b *windowsBackend) Tick(ready bool) (TickUpdate, error) {
 	metrics.Load5 = avg.Load5
 	metrics.Load15 = avg.Load15
 
-	if len(b.mounts) == 0 {
-		mounts, err := disk.ListMounts()
-		if err != nil {
+	mounts := b.shared.loadMounts()
+	if len(mounts) == 0 {
+		if listed, err := disk.ListMounts(); err != nil {
 			return TickUpdate{}, err
+		} else {
+			mounts = listed
+			b.shared.storeMounts(mounts)
 		}
-		b.mounts = mounts
 	}
 
-	b.poolIORates = zfs.ComputePoolIORates(prev.beforeZFS, afterZFS, elapsed)
+	diskStart := time.Now()
+	poolIORates := zfs.ComputePoolIORates(prev.beforeZFS, afterZFS, elapsed)
+	b.shared.storePoolIORates(poolIORates)
 	update.InterfaceMetrics = network.ComputeMetrics(prev.netBefore, netAfter, elapsed)
-	update.DiskMetrics = disk.BuildFromSamples(b.opts.HasZFS, b.mounts, prev.beforeIO, afterIO, prev.beforeZFS, afterZFS, elapsed)
+	update.DiskMetrics = disk.BuildFromSamples(b.opts.HasZFS, mounts, prev.beforeIO, afterIO, prev.beforeZFS, afterZFS, elapsed)
+	profilePhase("tick_disk", diskStart)
 
 	if b.opts.HasZFS {
 		if arcAfter, ok := zfs.ReadArcSnapshot(); ok && prev.hasArcBefore {
@@ -188,12 +191,17 @@ func (b *windowsBackend) RefreshSlow() (SlowUpdate, error) {
 	update := SlowUpdate{}
 
 	if b.opts.HasZFS {
-		b.poolStatus = zfs.ReadPoolStatus()
-		update.ZfsPoolMetrics = zfs.CollectPoolMetrics(b.poolIORates, b.poolStatus)
+		zfsStart := time.Now()
+		poolStatus := zfs.ReadPoolStatus()
+		b.shared.storePoolStatus(poolStatus)
+		update.ZfsPoolMetrics = zfs.CollectPoolMetrics(b.shared.loadPoolIORates(), poolStatus)
+		profilePhase("slow_zfs", zfsStart)
 	}
 
 	if b.opts.EnableDocker {
+		dockerStart := time.Now()
 		update.DockerContainers = docker.CollectContainerMetrics()
+		profilePhase("slow_docker", dockerStart)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -214,7 +222,7 @@ func (b *windowsBackend) RefreshSlow() (SlowUpdate, error) {
 
 	mounts, err := disk.ListMounts()
 	if err == nil {
-		b.mounts = mounts
+		b.shared.storeMounts(mounts)
 		update.Mounts = mounts
 		update.HasMounts = true
 	}

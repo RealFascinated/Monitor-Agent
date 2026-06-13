@@ -50,10 +50,8 @@ Each YAML key maps to an environment variable: `MONITOR_` + the key in uppercase
 | `push_schedule` | `*/15 * * * * *` | Cron with seconds (6 fields) |
 | `enable_docker` | `true` | Docker container stats (Linux) |
 | `enable_gpu` | `true` | GPU metrics collection |
-| `sample_interval` | `1s` | Fast sampler tick interval |
-| `slow_metrics_interval` | `30s` | Docker / GPU / ZFS status refresh interval |
 
-Other runtime variables: `MONITOR_HOST_ROOT` (host root bind mount prefix for disk metrics in containers), `MONITOR_LOG_LEVEL` (`debug`, `info`, `warn`, `error`).
+Other runtime variables: `MONITOR_HOST_ROOT` (host root bind mount prefix for disk metrics in containers), `MONITOR_LOG_LEVEL` (`debug`, `info`, `warn`, `error`), `MONITOR_PROFILE_COLLECT=1` (log per-phase collection timings at debug level).
 
 Boolean config env vars accept `true`/`false`, `1`/`0`, `yes`/`no`, or `on`/`off`.
 
@@ -98,6 +96,8 @@ wget -O /boot/config/plugins/dockerMan/templates-user/monitor-agent-nvidia.xml \
 Then open **Docker → Add Container**, choose **monitor-agent** or **monitor-agent-nvidia**, enter your **Ingest Token**, and apply. Defaults mount the host `/proc`, `/sys`, `/dev`, array root at `/host`, and the Docker socket for full metrics on Unraid (including `/mnt/*` shares and ZFS).
 
 ## Docker
+
+On Linux, container CPU and memory are collected from **cgroup sysfs** (`/sys/fs/cgroup`) when available — the same approach Netdata uses. Mount the host cgroup filesystem and optionally `/var/run/docker.sock` for human-readable container names. The agent falls back to `docker stats` only when no Docker cgroups are found.
 
 Images are published to GitHub Container Registry on each `agent/v*` release tag:
 

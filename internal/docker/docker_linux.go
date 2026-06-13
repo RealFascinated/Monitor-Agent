@@ -7,11 +7,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"fascinated.cc/monitor/agent/internal/executil"
 	"fascinated.cc/monitor/agent/internal/host"
 	"fascinated.cc/monitor/agent/internal/ingest"
 )
@@ -25,11 +25,18 @@ type statsLine struct {
 var bytePattern = regexp.MustCompile(`^(-?[0-9.]+)(TiB|GiB|MiB|KiB|B|TB|GB|MB|KB)$`)
 
 func CollectContainerMetrics() []ingest.DockerContainerMetric {
-	if !dockerEnabled() {
+	if metrics := collectFromCgroups(); len(metrics) > 0 {
+		return metrics
+	}
+	if !dockerCLIAvailable() {
 		return []ingest.DockerContainerMetric{}
 	}
+	warnCgroupFallbackOnce()
+	return collectFromDockerCLI()
+}
 
-	out, err := exec.Command("docker", "stats", "--format", "json", "--no-stream", "--no-trunc").Output()
+func collectFromDockerCLI() []ingest.DockerContainerMetric {
+	out, err := executil.CommandOutput("docker", "stats", "--format", "json", "--no-stream", "--no-trunc")
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
 		return []ingest.DockerContainerMetric{}
 	}
@@ -66,8 +73,16 @@ func CollectContainerMetrics() []ingest.DockerContainerMetric {
 	return metrics
 }
 
+func dockerCLIAvailable() bool {
+	if _, err := executil.LookPath("docker"); err != nil {
+		return false
+	}
+	_, err := executil.CommandOutput("docker", "info")
+	return err == nil
+}
+
 func hostCPUCount() int {
-	if out, err := exec.Command("docker", "info", "--format", "{{.NCPU}}").Output(); err == nil {
+	if out, err := executil.CommandOutput("docker", "info", "--format", "{{.NCPU}}"); err == nil {
 		if n, err := strconv.Atoi(strings.TrimSpace(string(out))); err == nil && n > 0 {
 			return n
 		}

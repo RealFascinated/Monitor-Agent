@@ -7,13 +7,11 @@ import (
 
 func TestConfigEnvVar(t *testing.T) {
 	tests := map[string]string{
-		"ingest_token":   "MONITOR_INGEST_TOKEN",
-		"api_endpoint":   "MONITOR_API_ENDPOINT",
-		"push_schedule":  "MONITOR_PUSH_SCHEDULE",
-		"enable_docker":  "MONITOR_ENABLE_DOCKER",
-		"sample_interval":       "MONITOR_SAMPLE_INTERVAL",
-		"slow_metrics_interval": "MONITOR_SLOW_METRICS_INTERVAL",
-		"config_file":           "MONITOR_CONFIG_FILE",
+		"ingest_token":  "MONITOR_INGEST_TOKEN",
+		"api_endpoint":  "MONITOR_API_ENDPOINT",
+		"push_schedule": "MONITOR_PUSH_SCHEDULE",
+		"enable_docker": "MONITOR_ENABLE_DOCKER",
+		"config_file":   "MONITOR_CONFIG_FILE",
 	}
 	for key, want := range tests {
 		if got := ConfigEnvVar(key); got != want {

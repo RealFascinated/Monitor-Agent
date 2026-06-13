@@ -15,8 +15,10 @@ import (
 )
 
 const (
-	DefaultVersion     = "2.0.0"
-	heartbeatInterval  = 30 * time.Second
+	DefaultVersion      = "2.0.0"
+	heartbeatInterval   = 30 * time.Second
+	sampleInterval      = time.Second
+	slowMetricsInterval = 30 * time.Second
 )
 
 type Agent struct {
@@ -57,13 +59,10 @@ func (a *Agent) Run(ctx context.Context) {
 	}
 	defer a.stopCron()
 
-	sampleInterval := a.sampleInterval()
-	slowInterval := a.slowMetricsInterval()
+	slog.Info("agent started", "schedule", schedule)
 
-	slog.Info("agent started", "schedule", schedule, "sample_interval", sampleInterval, "slow_metrics_interval", slowInterval)
-
-	go a.runSampleLoop(ctx, sampleInterval)
-	go a.runSlowLoop(ctx, slowInterval)
+	go a.runSampleLoop(ctx)
+	go a.runSlowLoop(ctx)
 	go a.runHeartbeatLoop(ctx)
 	a.sampler.WaitReady(3 * sampleInterval)
 	a.pushOnce()
@@ -84,8 +83,6 @@ func (a *Agent) Run(ctx context.Context) {
 			a.configMu.Lock()
 			a.Config = config
 			schedule = config.PushSchedule
-			sampleInterval = config.SampleInterval
-			slowInterval = config.SlowMetricsInterval
 			a.configMu.Unlock()
 
 			a.refreshSampler()
@@ -109,10 +106,9 @@ func (a *Agent) refreshSampler() {
 	})
 }
 
-func (a *Agent) runSampleLoop(ctx context.Context, _ time.Duration) {
+func (a *Agent) runSampleLoop(ctx context.Context) {
 	for {
-		interval := a.sampleInterval()
-		timer := time.NewTimer(interval)
+		timer := time.NewTimer(sampleInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -150,10 +146,9 @@ func (a *Agent) heartbeatOnce() {
 	}
 }
 
-func (a *Agent) runSlowLoop(ctx context.Context, _ time.Duration) {
+func (a *Agent) runSlowLoop(ctx context.Context) {
 	for {
-		interval := a.slowMetricsInterval()
-		timer := time.NewTimer(interval)
+		timer := time.NewTimer(slowMetricsInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -173,18 +168,6 @@ func (a *Agent) pushSchedule() string {
 	a.configMu.RLock()
 	defer a.configMu.RUnlock()
 	return a.Config.PushSchedule
-}
-
-func (a *Agent) sampleInterval() time.Duration {
-	a.configMu.RLock()
-	defer a.configMu.RUnlock()
-	return a.Config.SampleInterval
-}
-
-func (a *Agent) slowMetricsInterval() time.Duration {
-	a.configMu.RLock()
-	defer a.configMu.RUnlock()
-	return a.Config.SlowMetricsInterval
 }
 
 func (a *Agent) startCron(schedule string) error {
@@ -249,13 +232,12 @@ func (a *Agent) pushOnce() {
 		return
 	}
 
-	a.ServerDetails.CPUClockMhz = a.sampler.ClockMHz()
-
-	sample := a.sampler.Snapshot()
-	if !a.sampler.Ready() {
+	ready, clockMHz, sample := a.sampler.PushSnapshot()
+	if !ready {
 		slog.Warn("metrics not ready, skipping push")
 		return
 	}
+	a.ServerDetails.CPUClockMhz = clockMHz
 
 	if err := ingest.Push(config, buildIngestData(a.Version, a.ServerDetails, sample), a.Version); err != nil {
 		slog.Error("push metrics", "err", err)
@@ -267,12 +249,11 @@ func (a *Agent) pushOnce() {
 
 func (a *Agent) PrintOnce() {
 	collectStart := time.Now()
-	config := a.currentConfig()
 	a.refreshSampler()
 	if a.sampler == nil {
 		return
 	}
-	if err := a.sampler.RunOnce(config.SampleInterval); err != nil {
+	if err := a.sampler.RunOnce(sampleInterval); err != nil {
 		slog.Error("collect metrics", "err", err)
 		return
 	}
@@ -283,9 +264,8 @@ func (a *Agent) PrintOnce() {
 		a.ServerDetails.UptimeSeconds = uptime
 	}
 	a.ServerDetails.Ip = host.GetIP()
-	a.ServerDetails.CPUClockMhz = a.sampler.ClockMHz()
-
-	sample := a.sampler.Snapshot()
+	_, clockMHz, sample := a.sampler.PushSnapshot()
+	a.ServerDetails.CPUClockMhz = clockMHz
 	if err := ingest.Print(buildIngestData(a.Version, a.ServerDetails, sample)); err != nil {
 		slog.Error("print metrics", "err", err)
 		return

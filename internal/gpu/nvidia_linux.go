@@ -5,25 +5,25 @@ package gpu
 import (
 	"bufio"
 	"bytes"
-	"os/exec"
 	"strconv"
 	"strings"
 
+	"fascinated.cc/monitor/agent/internal/executil"
 	"fascinated.cc/monitor/agent/internal/ingest"
 )
 
 const nvidiaQuery = "name,uuid,utilization.gpu,utilization.memory,temperature.gpu,memory.used,memory.total,power.draw,utilization.encoder,utilization.decoder"
 
 func collectNVIDIA() []ingest.GPUMetric {
-	if _, err := exec.LookPath("nvidia-smi"); err != nil {
+	if _, err := executil.LookPath("nvidia-smi"); err != nil {
 		return nil
 	}
 
-	out, err := exec.Command(
+	out, err := executil.CommandOutput(
 		"nvidia-smi",
 		"--query-gpu="+nvidiaQuery,
 		"--format=csv,noheader,nounits",
-	).Output()
+	)
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
 		return nil
 	}
@@ -74,10 +74,10 @@ func parseNVIDIALine(line string) (ingest.GPUMetric, bool) {
 	}
 	if len(fields) >= 10 {
 		if v, ok := parseOptionalFloat(fields[8]); ok {
-			metric.EncoderUsagePercent = v
+			metric.EncoderUsagePercent = ingest.FloatPtr(v)
 		}
 		if v, ok := parseOptionalFloat(fields[9]); ok {
-			metric.DecoderUsagePercent = v
+			metric.DecoderUsagePercent = ingest.FloatPtr(v)
 		}
 	}
 	return metric, metric.Name != "" && rawID != ""

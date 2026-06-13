@@ -5,12 +5,12 @@ package zfs
 import (
 	"bufio"
 	"bytes"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"fascinated.cc/monitor/agent/internal/executil"
 	"fascinated.cc/monitor/agent/internal/ingest"
 	"fascinated.cc/monitor/agent/internal/linux"
 )
@@ -33,16 +33,23 @@ type PoolStatusSnapshot struct {
 	StatusMap map[string]poolStatusInfo
 }
 
+func EmptyPoolStatusSnapshot() PoolStatusSnapshot {
+	return PoolStatusSnapshot{
+		VdevMap:   map[string][]string{},
+		StatusMap: map[string]poolStatusInfo{},
+	}
+}
+
 func ReadPoolStatus() PoolStatusSnapshot {
 	empty := PoolStatusSnapshot{
 		VdevMap:   map[string][]string{},
 		StatusMap: map[string]poolStatusInfo{},
 	}
-	if _, err := exec.LookPath("zpool"); err != nil {
+	if _, err := executil.LookPath("zpool"); err != nil {
 		return empty
 	}
 
-	out, err := exec.Command("zpool", "status", "-P").Output()
+	out, err := executil.CommandOutput("zpool", "status", "-P")
 	if err != nil {
 		return empty
 	}
@@ -114,11 +121,11 @@ func ReadPoolStatus() PoolStatusSnapshot {
 }
 
 func CollectPoolMetrics(ioRates map[string]PoolIORates, status PoolStatusSnapshot) []ingest.ZfsPoolMetric {
-	if _, err := exec.LookPath("zpool"); err != nil {
+	if _, err := executil.LookPath("zpool"); err != nil {
 		return []ingest.ZfsPoolMetric{}
 	}
 
-	listOut, err := exec.Command("zpool", "list", "-H", "-p", "-o", "name,size,alloc,free,cap,health,fragmentation").Output()
+	listOut, err := executil.CommandOutput("zpool", "list", "-H", "-p", "-o", "name,size,alloc,free,cap,health,fragmentation")
 	if err != nil {
 		return []ingest.ZfsPoolMetric{}
 	}

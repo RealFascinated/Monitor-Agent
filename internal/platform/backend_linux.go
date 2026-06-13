@@ -10,10 +10,10 @@ import (
 	"fascinated.cc/monitor/agent/internal/cpu"
 	"fascinated.cc/monitor/agent/internal/disk"
 	"fascinated.cc/monitor/agent/internal/docker"
+	"fascinated.cc/monitor/agent/internal/fd"
 	gpupkg "fascinated.cc/monitor/agent/internal/gpu"
 	"fascinated.cc/monitor/agent/internal/ingest"
 	"fascinated.cc/monitor/agent/internal/linux"
-	"fascinated.cc/monitor/agent/internal/fd"
 	"fascinated.cc/monitor/agent/internal/loadavg"
 	"fascinated.cc/monitor/agent/internal/memory"
 	"fascinated.cc/monitor/agent/internal/oom"
@@ -48,19 +48,16 @@ type linuxBackend struct {
 
 	state       linuxTickState
 	initialized bool
+	shared      *linuxBackendShared
 
-	cgroup       string
-	mounts       []disk.Mount
-	poolStatus   zfs.PoolStatusSnapshot
-	poolIORates  map[string]zfs.PoolIORates
-	cgroupDevice string
+	cgroup string
 }
 
 func newLinuxBackend(opts Options) *linuxBackend {
 	return &linuxBackend{
-		opts:        opts,
-		poolIORates: map[string]zfs.PoolIORates{},
-		cgroup:      linux.Dir(),
+		opts:   opts,
+		shared: newLinuxBackendShared(),
+		cgroup: linux.Dir(),
 	}
 }
 
@@ -141,6 +138,7 @@ func (b *linuxBackend) Tick(ready bool) (TickUpdate, error) {
 		update.DiskMetrics = []ingest.DiskMetric{}
 	}
 
+	cpuStart := time.Now()
 	metrics := cpu.ComputeLinuxTick(cpu.LinuxTickInput{
 		PrevProc:       prev.procBefore,
 		CurrProc:       procAfter,
@@ -155,7 +153,7 @@ func (b *linuxBackend) Tick(ready bool) (TickUpdate, error) {
 		Cgroup:         b.cgroup,
 		Elapsed:        elapsed,
 	})
-	metrics.TemperatureMetrics = thermal.ToIngest(thermal.ReadTemperatures())
+	profilePhase("tick_cpu", cpuStart)
 
 	avg := loadavg.Read()
 	metrics.Load1 = avg.Load1
@@ -173,22 +171,27 @@ func (b *linuxBackend) Tick(ready bool) (TickUpdate, error) {
 
 	update.InterfaceMetrics = network.ComputeMetrics(prev.netBefore, netAfter, elapsed)
 
-	if len(b.mounts) == 0 {
-		mounts, err := disk.ListMounts()
-		if err != nil {
+	mounts := b.shared.loadMounts()
+	if len(mounts) == 0 {
+		if listed, err := disk.ListMounts(); err != nil {
 			return TickUpdate{}, err
+		} else {
+			mounts = listed
+			b.shared.storeMounts(mounts)
 		}
-		b.mounts = mounts
 	}
 
-	vdevMap := b.poolStatus.VdevMap
+	poolStatus := b.shared.loadPoolStatus()
+	vdevMap := poolStatus.VdevMap
 	if vdevMap == nil {
 		vdevMap = map[string][]string{}
 	}
 
-	b.poolIORates = zfs.ComputePoolIORates(prev.zfsIOBefore, zfsIOAfter, elapsed)
+	diskStart := time.Now()
+	poolIORates := zfs.ComputePoolIORates(prev.zfsIOBefore, zfsIOAfter, elapsed)
+	b.shared.storePoolIORates(poolIORates)
 	update.DiskMetrics = disk.BuildLinuxMetrics(
-		b.mounts,
+		mounts,
 		prev.diskstatsBefore,
 		diskstatsAfter,
 		prev.cgroupIOBefore,
@@ -196,10 +199,11 @@ func (b *linuxBackend) Tick(ready bool) (TickUpdate, error) {
 		prev.zfsIOBefore,
 		zfsIOAfter,
 		vdevMap,
-		b.cgroupDevice,
+		b.shared.loadCgroupDevice(),
 		b.opts.HasZFS,
 		elapsed,
 	)
+	profilePhase("tick_disk", diskStart)
 
 	if b.opts.HasZFS {
 		if arcAfter, ok := zfs.ReadArcSnapshot(); ok && prev.hasArcBefore {
@@ -207,7 +211,6 @@ func (b *linuxBackend) Tick(ready bool) (TickUpdate, error) {
 		}
 	}
 
-	update.TCPConnectionMetrics = connections.Read().ToIngest()
 	update.ServerMetrics = metrics
 	update.ClockMHz = clockMHz
 
@@ -241,21 +244,33 @@ func (b *linuxBackend) RefreshSlow() (SlowUpdate, error) {
 	update := SlowUpdate{}
 
 	if b.opts.HasZFS {
-		b.poolStatus = zfs.ReadPoolStatus()
-		b.cgroupDevice = resolveCgroupDevice()
-		update.ZfsPoolMetrics = zfs.CollectPoolMetrics(b.poolIORates, b.poolStatus)
+		zfsStart := time.Now()
+		poolStatus := zfs.ReadPoolStatus()
+		b.shared.storePoolStatus(poolStatus)
+		cgroupDevice := resolveCgroupDevice()
+		b.shared.storeCgroupDevice(cgroupDevice)
+		update.ZfsPoolMetrics = zfs.CollectPoolMetrics(b.shared.loadPoolIORates(), poolStatus)
+		profilePhase("slow_zfs", zfsStart)
 	}
 
 	if b.opts.EnableDocker {
+		dockerStart := time.Now()
 		update.DockerContainers = docker.CollectContainerMetrics()
+		profilePhase("slow_docker", dockerStart)
 	}
 	if b.opts.EnableGPU {
 		update.GPUMetrics = gpupkg.Collect()
 	}
 
+	tcpStart := time.Now()
+	update.TCPConnectionMetrics = connections.CollectTCP()
+	profilePhase("slow_tcp", tcpStart)
+
+	update.ServerMetrics.TemperatureMetrics = thermal.ToIngest(thermal.ReadTemperatures())
+
 	mounts, err := disk.ListMounts()
 	if err == nil {
-		b.mounts = mounts
+		b.shared.storeMounts(mounts)
 		update.Mounts = mounts
 		update.HasMounts = true
 	}

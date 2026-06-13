@@ -8,6 +8,20 @@ import (
 	"fascinated.cc/monitor/agent/internal/ingest"
 )
 
+func gpuEncoder(m ingest.GPUMetric) (float64, bool) {
+	if m.EncoderUsagePercent == nil {
+		return 0, false
+	}
+	return *m.EncoderUsagePercent, true
+}
+
+func gpuDecoder(m ingest.GPUMetric) (float64, bool) {
+	if m.DecoderUsagePercent == nil {
+		return 0, false
+	}
+	return *m.DecoderUsagePercent, true
+}
+
 func TestParseNVIDIALine(t *testing.T) {
 	metric, ok := parseNVIDIALine(`NVIDIA GeForce RTX 4090, GPU-11111111-2222-3333-4444-555555555555, 12, 3, 45, 1024, 24576, 125.50, 78, 22`)
 	if !ok {
@@ -26,8 +40,13 @@ func TestParseNVIDIALine(t *testing.T) {
 	if metric.TemperatureCelsius != 45 || metric.PowerWatts != 125.5 {
 		t.Fatalf("temp/power: %+v", metric)
 	}
-	if metric.EncoderUsagePercent != 78 || metric.DecoderUsagePercent != 22 {
-		t.Fatalf("encoder/decoder: %+v", metric)
+	enc, ok := gpuEncoder(metric)
+	if !ok || enc != 78 {
+		t.Fatalf("encoder: %+v", metric.EncoderUsagePercent)
+	}
+	dec, ok := gpuDecoder(metric)
+	if !ok || dec != 22 {
+		t.Fatalf("decoder: %+v", metric.DecoderUsagePercent)
 	}
 }
 
@@ -42,7 +61,7 @@ func TestParseNVIDIALineQuotedName(t *testing.T) {
 	if metric.PowerWatts != 0 {
 		t.Fatalf("power: %v", metric.PowerWatts)
 	}
-	if metric.EncoderUsagePercent != 0 || metric.DecoderUsagePercent != 0 {
+	if metric.EncoderUsagePercent != nil || metric.DecoderUsagePercent != nil {
 		t.Fatalf("encoder/decoder: %+v", metric)
 	}
 }
@@ -52,7 +71,12 @@ func TestParseNVIDIALineZeroEncoderDecoder(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ok")
 	}
-	if metric.EncoderUsagePercent != 0 || metric.DecoderUsagePercent != 0 {
-		t.Fatalf("encoder/decoder: %+v", metric)
+	enc, ok := gpuEncoder(metric)
+	if !ok || enc != 0 {
+		t.Fatalf("encoder: %+v", metric.EncoderUsagePercent)
+	}
+	dec, ok := gpuDecoder(metric)
+	if !ok || dec != 0 {
+		t.Fatalf("decoder: %+v", metric.DecoderUsagePercent)
 	}
 }

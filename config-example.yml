@@ -2,7 +2,5 @@
 ingest_token: ""
 api_endpoint: "https://monitor.fascinated.cc/api/v1/servers/ingest"
 push_schedule: "*/5 * * * * *"
-sample_interval: "1s"
-slow_metrics_interval: "30s"
 enable_docker: true
 enable_gpu: true

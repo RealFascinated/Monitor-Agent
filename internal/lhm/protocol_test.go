@@ -52,8 +52,11 @@ func TestParseServerMetricsJSON(t *testing.T) {
 	if len(snap.GPUs) != 1 || snap.GPUs[0].Vendor != "nvidia" || snap.GPUs[0].UsagePercent != 22.5 {
 		t.Fatalf("gpus: %+v", snap.GPUs)
 	}
-	if snap.GPUs[0].EncoderUsagePercent != 80.0 || snap.GPUs[0].DecoderUsagePercent != 15.0 {
-		t.Fatalf("encoder/decoder: %+v", snap.GPUs[0])
+	if snap.GPUs[0].EncoderUsagePercent == nil || *snap.GPUs[0].EncoderUsagePercent != 80.0 {
+		t.Fatalf("encoder: %+v", snap.GPUs[0].EncoderUsagePercent)
+	}
+	if snap.GPUs[0].DecoderUsagePercent == nil || *snap.GPUs[0].DecoderUsagePercent != 15.0 {
+		t.Fatalf("decoder: %+v", snap.GPUs[0].DecoderUsagePercent)
 	}
 	if snap.GPUs[0].DeviceID != ingest.HashDeviceID(`\\?\PCI#VEN_10DE&DEV_2684`) {
 		t.Fatalf("device id: got %q", snap.GPUs[0].DeviceID)
@@ -69,7 +72,7 @@ func TestParseServerMetricsJSONMissingEncoderDecoder(t *testing.T) {
 	if len(snap.GPUs) != 1 {
 		t.Fatalf("gpus: %+v", snap.GPUs)
 	}
-	if snap.GPUs[0].EncoderUsagePercent != 0 || snap.GPUs[0].DecoderUsagePercent != 0 {
+	if snap.GPUs[0].EncoderUsagePercent != nil || snap.GPUs[0].DecoderUsagePercent != nil {
 		t.Fatalf("encoder/decoder: %+v", snap.GPUs[0])
 	}
 }

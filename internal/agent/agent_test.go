@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"fascinated.cc/monitor/agent/internal/collector"
 	"fascinated.cc/monitor/agent/internal/ingest"
@@ -41,8 +40,7 @@ func TestStartCronInvalidScheduleKeepsExisting(t *testing.T) {
 	a := &Agent{
 		Version: "2.0.0",
 		Config: &Config{
-			PushSchedule:   "*/5 * * * * *",
-			SampleInterval: time.Second,
+			PushSchedule: "*/5 * * * * *",
 		},
 	}
 	if err := a.startCron("*/5 * * * * *"); err != nil {
@@ -63,8 +61,7 @@ func TestStartCronReplacesOnValidSchedule(t *testing.T) {
 	a := &Agent{
 		Version: "2.0.0",
 		Config: &Config{
-			PushSchedule:   "*/5 * * * * *",
-			SampleInterval: time.Second,
+			PushSchedule: "*/5 * * * * *",
 		},
 	}
 	if err := a.startCron("*/5 * * * * *"); err != nil {
@@ -92,10 +89,9 @@ func TestPushOnceSkipsWhenNotReady(t *testing.T) {
 	a := &Agent{
 		Version: "2.0.0",
 		Config: &Config{
-			IngestToken:    "test-token",
-			ApiEndpoint:    srv.URL,
-			PushSchedule:   "*/5 * * * * *",
-			SampleInterval: time.Second,
+			IngestToken:  "test-token",
+			ApiEndpoint:  srv.URL,
+			PushSchedule: "*/5 * * * * *",
 		},
 		sampler: collector.NewSampler(collector.Options{}),
 	}

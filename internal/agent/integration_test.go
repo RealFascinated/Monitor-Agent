@@ -21,9 +21,8 @@ func TestAgentPushWhenSamplerReady(t *testing.T) {
 	defer srv.Close()
 
 	config := &Config{
-		IngestToken:    "test-token",
-		ApiEndpoint:    srv.URL,
-		SampleInterval: 50 * time.Millisecond,
+		IngestToken: "test-token",
+		ApiEndpoint: srv.URL,
 	}
 
 	a := New(config, "2.0.0")
@@ -34,7 +33,7 @@ func TestAgentPushWhenSamplerReady(t *testing.T) {
 	if err := a.sampler.Tick(); err != nil {
 		t.Fatalf("first tick: %v", err)
 	}
-	time.Sleep(config.SampleInterval)
+	time.Sleep(50 * time.Millisecond)
 	if err := a.sampler.Tick(); err != nil {
 		t.Fatalf("second tick: %v", err)
 	}

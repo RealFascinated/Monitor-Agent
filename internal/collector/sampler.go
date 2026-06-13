@@ -13,24 +13,18 @@ type Sampler struct {
 	opts Options
 
 	mu     sync.RWMutex
-	tickMu sync.Mutex
+	fastMu sync.Mutex
+	slowMu sync.Mutex
 
-	result   Result
-	ready    bool
-	clockMHz float64
-	backend  platform.Backend
-}
-
-func (s *Sampler) ClockMHz() float64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.clockMHz
+	fast    FastSnapshot
+	slow    SlowSnapshot
+	backend platform.Backend
 }
 
 func NewSampler(opts Options) *Sampler {
 	return &Sampler{
 		opts: opts,
-		result: Result{
+		fast: FastSnapshot{
 			InterfaceMetrics: []ingest.InterfaceMetrics{},
 			DiskMetrics:      []ingest.DiskMetric{},
 		},
@@ -43,14 +37,14 @@ func NewSampler(opts Options) *Sampler {
 }
 
 func (s *Sampler) Tick() error {
-	s.tickMu.Lock()
-	defer s.tickMu.Unlock()
+	s.fastMu.Lock()
+	defer s.fastMu.Unlock()
 	return s.tick()
 }
 
 func (s *Sampler) RefreshSlow() error {
-	s.tickMu.Lock()
-	defer s.tickMu.Unlock()
+	s.slowMu.Lock()
+	defer s.slowMu.Unlock()
 	return s.refreshSlow()
 }
 
@@ -69,53 +63,20 @@ func (s *Sampler) RunOnce(interval time.Duration) error {
 func (s *Sampler) Ready() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.ready
+	return s.fast.Ready
 }
 
-func (s *Sampler) Snapshot() Result {
+func (s *Sampler) ClockMHz() float64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return cloneResult(s.result)
+	return s.fast.ClockMHz
 }
 
-func (s *Sampler) setResult(result Result, ready bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.result = result
-	s.ready = ready
-}
-
-func cloneResult(r Result) Result {
-	out := r
-	if r.InterfaceMetrics != nil {
-		out.InterfaceMetrics = append([]ingest.InterfaceMetrics(nil), r.InterfaceMetrics...)
-	}
-	if r.DiskMetrics != nil {
-		out.DiskMetrics = append([]ingest.DiskMetric(nil), r.DiskMetrics...)
-	}
-	if r.ZfsPoolMetrics != nil {
-		out.ZfsPoolMetrics = append([]ingest.ZfsPoolMetric(nil), r.ZfsPoolMetrics...)
-	}
-	if r.DockerContainers != nil {
-		out.DockerContainers = append([]ingest.DockerContainerMetric(nil), r.DockerContainers...)
-	}
-	if r.GPUMetrics != nil {
-		out.GPUMetrics = append([]ingest.GPUMetric(nil), r.GPUMetrics...)
-	}
-	if r.TCPConnectionMetrics != nil {
-		out.TCPConnectionMetrics = append([]ingest.TCPConnectionMetric(nil), r.TCPConnectionMetrics...)
-	}
-	if r.ServerMetrics.CPUCoreMetrics != nil {
-		out.ServerMetrics.CPUCoreMetrics = append([]ingest.CPUCoreMetric(nil), r.ServerMetrics.CPUCoreMetrics...)
-	}
-	if r.ServerMetrics.TemperatureMetrics != nil {
-		out.ServerMetrics.TemperatureMetrics = append([]ingest.TemperatureMetric(nil), r.ServerMetrics.TemperatureMetrics...)
-	}
-	if r.ZfsArcMetrics != nil {
-		arc := *r.ZfsArcMetrics
-		out.ZfsArcMetrics = &arc
-	}
-	return out
+// PushSnapshot returns assembled metrics and fast-path metadata for push.
+func (s *Sampler) PushSnapshot() (ready bool, clockMHz float64, result Result) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fast.Ready, s.fast.ClockMHz, Assemble(s.fast, s.slow)
 }
 
 // WaitReady blocks until at least one rate sample is available or the timeout elapses.
