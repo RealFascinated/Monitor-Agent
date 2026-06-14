@@ -71,7 +71,7 @@ func collectFromCgroups() []ingest.DockerContainerMetric {
 		next[container.id] = cgroupCPUState{usageUsec: usageUsec, at: now}
 
 		cpuUsage := 0.0
-		if prev, found := cgroupCollector.prev[container.id]; found {
+		if prev, found := cgroupCollector.prev[container.id]; found && usageUsec >= prev.usageUsec {
 			delta := usageUsec - prev.usageUsec
 			elapsedUsec := uint64(elapsed.Microseconds())
 			if elapsedUsec > 0 && delta > 0 {
