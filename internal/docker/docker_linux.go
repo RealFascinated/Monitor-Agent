@@ -66,7 +66,7 @@ func collectFromDockerCLI() []ingest.DockerContainerMetric {
 
 		metrics = append(metrics, ingest.DockerContainerMetric{
 			ContainerName: stats.Name,
-			CPUUsage:      cpuUsage,
+			CPUUsage:      &cpuUsage,
 			MemoryUsage:   memoryUsage,
 		})
 	}

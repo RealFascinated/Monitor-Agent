@@ -70,16 +70,24 @@ func collectFromCgroups() []ingest.DockerContainerMetric {
 		}
 		next[container.id] = cgroupCPUState{usageUsec: usageUsec, at: now}
 
-		cpuUsage := 0.0
-		if prev, found := cgroupCollector.prev[container.id]; found && usageUsec >= prev.usageUsec {
-			delta := usageUsec - prev.usageUsec
-			elapsedUsec := uint64(elapsed.Microseconds())
-			if elapsedUsec > 0 && delta > 0 {
-				cpuUsage = 100.0 * float64(delta) / float64(elapsedUsec) / float64(hostCPUs)
-				if cpuUsage > 100 {
-					cpuUsage = 100
+		var cpuUsage *float64
+		if prev, found := cgroupCollector.prev[container.id]; found {
+			if usageUsec >= prev.usageUsec {
+				elapsedUsec := uint64(elapsed.Microseconds())
+				if elapsedUsec > 0 {
+					delta := usageUsec - prev.usageUsec
+					if delta == 0 {
+						zero := 0.0
+						cpuUsage = &zero
+					} else {
+						usage := 100.0 * float64(delta) / float64(elapsedUsec) / float64(hostCPUs)
+						if usage > 100 {
+							usage = 100
+						}
+						usage = math.Round(usage*100) / 100
+						cpuUsage = &usage
+					}
 				}
-				cpuUsage = math.Round(cpuUsage*100) / 100
 			}
 		}
 

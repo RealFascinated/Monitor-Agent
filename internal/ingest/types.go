@@ -127,9 +127,9 @@ type ZfsPoolMetric struct {
 }
 
 type DockerContainerMetric struct {
-	ContainerName string  `json:"containerName"`
-	CPUUsage      float64 `json:"cpuUsage"`
-	MemoryUsage   int64   `json:"memoryUsage"`
+	ContainerName string   `json:"containerName"`
+	CPUUsage      *float64 `json:"cpuUsage,omitempty"`
+	MemoryUsage   int64    `json:"memoryUsage"`
 }
 
 type DiskMetric struct {
